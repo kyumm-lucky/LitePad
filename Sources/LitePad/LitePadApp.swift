@@ -23,8 +23,20 @@ struct LitePadApp: App {
                     .keyboardShortcut("n", modifiers: .command)
                 Button("打开…") { session.openFile() }
                     .keyboardShortcut("o", modifiers: .command)
+                Menu("打开最近") {
+                    ForEach(session.recentFiles, id: \.absoluteString) { url in
+                        Button(url.lastPathComponent) { session.openRecent(url) }
+                    }
+                }
+                .disabled(session.recentFiles.isEmpty)
                 Button("保存") { session.saveSelectedTab() }
                     .keyboardShortcut("s", modifiers: .command)
+                Button("另存为…") { session.saveAsSelectedTab() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("查找…") { session.toggleFind() }
+                    .keyboardShortcut("f", modifiers: .command)
+                Button("跳转到行…") { session.goToLine() }
+                    .keyboardShortcut("l", modifiers: .command)
                 Divider()
                 Button("关闭标签页") { session.closeSelectedTab() }
                     .keyboardShortcut("w", modifiers: .command)
