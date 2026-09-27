@@ -67,23 +67,26 @@ enum FindEngine {
     /// 全部替换后的新文本；非法正则返回 nil
     static func replacingAll(_ state: FindState, in text: String) -> String? {
         guard !state.regexError, isValid(state) else { return nil }
-        if state.useRegex {
-            guard let regex = compiledRegex(for: state) else { return nil }
-            let nsText = text as NSString
-            return regex.stringByReplacingMatches(
-                in: text, options: [],
-                range: NSRange(location: 0, length: nsText.length),
-                withTemplate: state.replacement)
-        }
-        // literal：单趟正向拼装（匹配间隙原文 + 替换文本），
-        // matches 已含全词过滤且升序互不重叠，与逐个倒序替换结果一致
+        // 两条路径都消费 state.matches（与面板计数同一份已过滤列表，零长匹配已剔除），
+        // 保证"替换范围 = 显示计数"，杜绝计数 0/0 却仍替换的口径分裂
         let nsText = text as NSString
         var result = ""
         var cursor = 0
-        for range in state.matches {
-            result += nsText.substring(with: NSRange(location: cursor, length: range.location - cursor))
-            result += state.replacement
-            cursor = range.location + range.length
+
+        if state.useRegex {
+            guard let regex = compiledRegex(for: state) else { return nil }
+            for range in state.matches {
+                guard let match = regex.firstMatch(in: text, options: [], range: range) else { return nil }
+                result += nsText.substring(with: NSRange(location: cursor, length: range.location - cursor))
+                result += regex.replacementString(for: match, in: text, offset: 0, template: state.replacement)
+                cursor = range.location + range.length
+            }
+        } else {
+            for range in state.matches {
+                result += nsText.substring(with: NSRange(location: cursor, length: range.location - cursor))
+                result += state.replacement
+                cursor = range.location + range.length
+            }
         }
         result += nsText.substring(from: cursor)
         return result

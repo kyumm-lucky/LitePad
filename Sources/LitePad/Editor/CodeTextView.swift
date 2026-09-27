@@ -192,6 +192,12 @@ private func goToLine(_ line: Int, in textView: NSTextView?) {
 /// 全部替换是一次完整文档替换（单次 Cmd+Z 回滚，KTD7）
 private func performReplace(textView: NSTextView, tab: EditorTab, all: Bool) {
     guard let state = tab.findState, !state.query.isEmpty, !state.regexError else { return }
+    // 组字期间视图含未上屏的 marked text，模型与匹配区间已过期，替换会改错范围；
+    // 拒绝执行，等组字结束 textDidChange 重新同步与重算后再替换
+    guard !textView.hasMarkedText() else {
+        NSSound.beep()
+        return
+    }
     let text = textView.string
 
     if all {

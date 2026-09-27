@@ -20,10 +20,10 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         case .utf8BOM: return "Unicode (UTF-8) with BOM"
         case .utf16: return "Unicode (UTF-16)"
         case .utf16BE: return "Unicode (UTF-16BE)"
-        case .utf16LE: return "Unicode (UTF-16LE)"
+        case .utf16LE: return "Unicode (UTF-16LE，无 BOM)"
         case .utf32: return "Unicode (UTF-32)"
         case .utf32BE: return "Unicode (UTF-32BE)"
-        case .utf32LE: return "Unicode (UTF-32LE)"
+        case .utf32LE: return "Unicode (UTF-32LE，无 BOM)"
         case .gb18030: return "简体中文 (GB18030)"
         }
     }
@@ -35,7 +35,9 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         )
     )
 
-    /// 把文本编码为当前编码的字节；「Unicode (UTF-16)/(UTF-32)」带 BOM（小端），显式 BE/LE 不带 BOM
+    /// 把文本编码为当前编码的字节。
+    /// 「Unicode (UTF-16)/(UTF-32)」与 BE 变体带 BOM（BE 按惯例 BE 序 BOM），
+    /// 保证 BOM 检测出的编码保存后字节往返一致；显式 LE 变体不带 BOM
     func encode(_ text: String) -> Data {
         switch self {
         case .utf8:
@@ -45,13 +47,13 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         case .utf16:
             return Data([0xFF, 0xFE]) + (text.data(using: .utf16LittleEndian) ?? Data())
         case .utf16BE:
-            return text.data(using: .utf16BigEndian) ?? Data()
+            return Data([0xFE, 0xFF]) + (text.data(using: .utf16BigEndian) ?? Data())
         case .utf16LE:
             return text.data(using: .utf16LittleEndian) ?? Data()
         case .utf32:
             return Data([0xFF, 0xFE, 0x00, 0x00]) + (text.data(using: .utf32LittleEndian) ?? Data())
         case .utf32BE:
-            return text.data(using: .utf32BigEndian) ?? Data()
+            return Data([0x00, 0x00, 0xFE, 0xFF]) + (text.data(using: .utf32BigEndian) ?? Data())
         case .utf32LE:
             return text.data(using: .utf32LittleEndian) ?? Data()
         case .gb18030:
@@ -60,19 +62,20 @@ enum TextEncoding: String, CaseIterable, Identifiable {
     }
 
     /// 解码文件数据并给出判定编码：优先按 BOM 识别（UTF-32LE 的 BOM 以 UTF-16LE 的 BOM 开头，须先判 UTF-32），
-    /// 无 BOM 时先做宽字符端序探测，再依次尝试 UTF-8、GB18030，最后按 UTF-8 容错解码
+    /// BOM 检出映射到带 BOM 的编码变体以保证保存字节往返一致；无 BOM 时先做宽字符端序探测，
+    /// 再依次尝试 UTF-8、GB18030，最后按 UTF-8 容错解码
     static func decode(_ data: Data) -> (text: String, encoding: TextEncoding) {
         if data.starts(with: [0x00, 0x00, 0xFE, 0xFF]) {
             return (decodeAfterBOM(data, bomLength: 4, encoding: .utf32BigEndian), .utf32BE)
         }
         if data.starts(with: [0xFF, 0xFE, 0x00, 0x00]) {
-            return (decodeAfterBOM(data, bomLength: 4, encoding: .utf32LittleEndian), .utf32LE)
+            return (decodeAfterBOM(data, bomLength: 4, encoding: .utf32LittleEndian), .utf32)
         }
         if data.starts(with: [0xFE, 0xFF]) {
             return (decodeAfterBOM(data, bomLength: 2, encoding: .utf16BigEndian), .utf16BE)
         }
         if data.starts(with: [0xFF, 0xFE]) {
-            return (decodeAfterBOM(data, bomLength: 2, encoding: .utf16LittleEndian), .utf16LE)
+            return (decodeAfterBOM(data, bomLength: 2, encoding: .utf16LittleEndian), .utf16)
         }
         if data.starts(with: [0xEF, 0xBB, 0xBF]) {
             return (decodeAfterBOM(data, bomLength: 3, encoding: .utf8), .utf8BOM)
