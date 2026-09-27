@@ -11,9 +11,11 @@ enum StatusBarMenuKind {
 /// 主界面：标签栏 + 编辑区 + 状态栏
 struct ContentView: View {
     @EnvironmentObject private var session: EditorSession
+    @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
+            WindowSizeSync()
             VStack(spacing: 0) {
                 TabBarView()
                 if let tab = session.selectedTab {
@@ -109,8 +111,41 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .background(statusBarBackground)
         }
+    }
+
+    /// 状态栏背景：色调 = 半透明材质，不透明 = 窗口底色
+    @ViewBuilder
+    private var statusBarBackground: some View {
+        if settings.statusBarStyle == .tinted {
+            Rectangle().fill(.regularMaterial)
+        } else {
+            Color(nsColor: .windowBackgroundColor)
+        }
+    }
+}
+
+/// 启动时按设置应用固定窗口大小（仅新窗口出现时生效一次；空值表示自动）
+private struct WindowSizeSync: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                guard settings.windowWidth != nil || settings.windowHeight != nil,
+                      let window = NSApp.keyWindow else { return }
+                guard let contentView = window.contentView else { return }
+                var size = contentView.frame.size
+                if let width = settings.windowWidth {
+                    size.width = CGFloat(max(200, width))
+                }
+                if let height = settings.windowHeight {
+                    size.height = CGFloat(max(200, height))
+                }
+                window.setContentSize(size)
+            }
     }
 }
 
@@ -134,16 +169,29 @@ private struct WindowTitleSync: View {
 
 private struct StatusBarView: View {
     @ObservedObject var tab: EditorTab
+    @ObservedObject private var settings = AppSettings.shared
     let onOpen: (StatusBarMenuKind) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("行：\(tab.stats.totalLines)")
-            Text("字符：\(tab.stats.characterCount)")
-            Text("字：\(tab.stats.wordCount)")
-            Text("位置：\(tab.stats.caretOffset)")
-            Text("行：\(tab.stats.caretLine)")
-            Text("列：\(tab.stats.caretColumn)")
+            if settings.statusBarLineCount {
+                Text("行：\(tab.stats.totalLines)")
+            }
+            if settings.statusBarCharCount {
+                Text("字符：\(tab.stats.characterCount)")
+            }
+            if settings.statusBarWordCount {
+                Text("字：\(tab.stats.wordCount)")
+            }
+            if settings.statusBarCaretOffset {
+                Text("位置：\(tab.stats.caretOffset)")
+            }
+            if settings.statusBarCaretLine {
+                Text("行：\(tab.stats.caretLine)")
+            }
+            if settings.statusBarCaretColumn {
+                Text("列：\(tab.stats.caretColumn)")
+            }
             Spacer()
             Text(tab.isDirty ? "未保存" : "-")
             StatusBarMenu(label: tab.language.displayName, onOpen: { onOpen(.language) })
@@ -154,7 +202,13 @@ private struct StatusBarView: View {
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background {
+            if settings.statusBarStyle == .tinted {
+                Rectangle().fill(.regularMaterial)
+            } else {
+                Color(nsColor: .windowBackgroundColor)
+            }
+        }
     }
 }
 

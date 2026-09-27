@@ -35,6 +35,30 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         )
     )
 
+    /// 对应的 Foundation 编码（供 IANA 名称反查与解码尝试复用）
+    var stringEncoding: String.Encoding {
+        switch self {
+        case .utf8, .utf8BOM: return .utf8
+        case .utf16: return .utf16
+        case .utf16BE: return .utf16BigEndian
+        case .utf16LE: return .utf16LittleEndian
+        case .utf32: return .utf32
+        case .utf32BE: return .utf32BigEndian
+        case .utf32LE: return .utf32LittleEndian
+        case .gb18030: return TextEncoding.gb18030Encoding
+        }
+    }
+
+    /// 反查与指定 Foundation 编码对应的枚举项
+    static func matching(_ encoding: String.Encoding) -> TextEncoding? {
+        allCases.first { $0.stringEncoding == encoding }
+    }
+
+    /// 无 BOM 文本可参与优先级尝试的编码；BOM 变体由 BOM 探测固定处理
+    private static let detectionCandidates: [TextEncoding] = [.utf8, .gb18030]
+    /// 宽字符编码仅在字节确含 0x00 时才参与尝试（纯 ASCII 文本按宽字符解码只会得到乱码）
+    private static let wideCandidates: [TextEncoding] = [.utf16LE, .utf16BE, .utf32LE, .utf32BE]
+
     /// 把文本编码为当前编码的字节。
     /// 「Unicode (UTF-16)/(UTF-32)」与 BE 变体带 BOM（BE 按惯例 BE 序 BOM），
     /// 保证 BOM 检测出的编码保存后字节往返一致；显式 LE 变体不带 BOM
@@ -63,8 +87,11 @@ enum TextEncoding: String, CaseIterable, Identifiable {
 
     /// 解码文件数据并给出判定编码：优先按 BOM 识别（UTF-32LE 的 BOM 以 UTF-16LE 的 BOM 开头，须先判 UTF-32），
     /// BOM 检出映射到带 BOM 的编码变体以保证保存字节往返一致；无 BOM 时先做宽字符端序探测，
-    /// 再依次尝试 UTF-8、GB18030，最后按 UTF-8 容错解码
-    static func decode(_ data: Data) -> (text: String, encoding: TextEncoding) {
+    /// 再按用户配置的优先级尝试解码（默认 UTF-8 → GB18030），最后按 UTF-8 容错解码。
+    /// 「参考文稿中的编码声明」仅在常规探测全部失败后兜底使用，避免错误的声明污染可靠的探测结果
+    static func decode(_ data: Data,
+                       priority: [TextEncoding] = [.utf8, .gb18030],
+                       respectCharsetDeclaration: Bool = false) -> (text: String, encoding: TextEncoding) {
         if data.starts(with: [0x00, 0x00, 0xFE, 0xFF]) {
             return (decodeAfterBOM(data, bomLength: 4, encoding: .utf32BigEndian), .utf32BE)
         }
@@ -84,13 +111,50 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         if data.contains(0), let (text, encoding) = decodeEndianless(data) {
             return (text, encoding)
         }
-        if let text = String(data: data, encoding: .utf8) {
-            return (text, .utf8)
+        for candidate in priority {
+            if TextEncoding.wideCandidates.contains(candidate) {
+                guard data.contains(0) else { continue }
+            } else if !TextEncoding.detectionCandidates.contains(candidate) {
+                continue
+            }
+            if let text = String(data: data, encoding: candidate.stringEncoding), !text.contains("\u{0}") {
+                return (text, candidate)
+            }
         }
-        if let text = String(data: data, encoding: gb18030Encoding) {
-            return (text, .gb18030)
+        if respectCharsetDeclaration, let declared = decodeWithDeclaredCharset(data) {
+            return declared
         }
         return (String(decoding: data, as: UTF8.self), .utf8)
+    }
+
+    /// 从文稿头部的 HTML meta / CSS @charset 声明识别编码；仅采信应用内置编码表内的名称，
+    /// 且解码结果不含 NUL 才可信。宽字符声明不参与：无 BOM 的 UTF-16 文件交由端序探测判定更可靠
+    private static func decodeWithDeclaredCharset(_ data: Data) -> (text: String, encoding: TextEncoding)? {
+        guard let regex = declarationRegex else { return nil }
+        let head = String(decoding: data.prefix(2048), as: UTF8.self)
+        let range = NSRange(head.startIndex..., in: head)
+        guard let match = regex.firstMatch(in: head, options: [], range: range),
+              let nameRange = Range(match.range(at: 1), in: head) else { return nil }
+        let name = String(head[nameRange]).lowercased()
+        // 常见中文声明别名归并到 GB18030（超集编码）
+        let aliases = ["gb2312": TextEncoding.gb18030, "gbk": TextEncoding.gb18030]
+        let declared = aliases[name]
+            ?? ianaEncoding(name: name).flatMap { TextEncoding.matching($0) }
+        guard let declared, !TextEncoding.wideCandidates.contains(declared), declared != .utf8BOM,
+              let text = String(data: data, encoding: declared.stringEncoding),
+              !text.contains("\u{0}") else { return nil }
+        return (text, declared)
+    }
+
+    private static let declarationRegex = try? NSRegularExpression(
+        pattern: #"(?i)(?:@charset\s+"|charset\s*=\s*["']?)([\w\-]+)"#
+    )
+
+    /// IANA 编码名 → Foundation 编码
+    private static func ianaEncoding(name: String) -> String.Encoding? {
+        let cfEncoding = CFStringConvertIANACharSetNameToEncoding(name as CFString)
+        guard cfEncoding != kCFStringEncodingInvalidId else { return nil }
+        return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
     }
 
     /// 无 BOM 的 UTF-16/32 端序探测：按 0x00 字节在码元中的位置占多数的一侧判定端序，

@@ -8,6 +8,8 @@ struct LitePadApp: App {
     init() {
         // 以 `swift run` 裸进程方式运行时也能获得常规 App 形态（Dock 图标、菜单栏）
         NSApplication.shared.setActivationPolicy(.regular)
+        // 按设置应用浅色 / 深色外观
+        AppSettings.shared.applyAppearance()
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
@@ -41,6 +43,10 @@ struct LitePadApp: App {
                 Button("关闭标签页") { session.closeSelectedTab() }
                     .keyboardShortcut("w", modifiers: .command)
             }
+            // 应用菜单「设置…」由 Settings 场景自动插入（系统本地化，含 ⌘, 快捷键），无需显式声明
+        }
+        Settings {
+            SettingsView()
         }
     }
 }

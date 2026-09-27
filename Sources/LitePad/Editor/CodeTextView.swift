@@ -1,20 +1,30 @@
 import SwiftUI
 import AppKit
 
-/// NSTextView 的 SwiftUI 封装：等宽字体、软换行、系统撤销/重做、行号栏。
+/// NSTextView 的 SwiftUI 封装：等宽字体、软换行、系统撤销/重做、行号栏、外观设置。
 /// 文本编辑经由 delegate 回写模型；模型侧变化仅在内容确实不同时才回写视图，
 /// 避免逐键输入时丢失光标位置。
 struct CodeTextView: NSViewRepresentable {
     @ObservedObject var tab: EditorTab
+    /// 观察全局设置：设置变化驱动 updateNSView 重应用外观
+    @ObservedObject private var settings = AppSettings.shared
 
     func makeCoordinator() -> Coordinator {
         Coordinator(tab: tab)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
+        // 自建 TextKit 1 栈：装饰（不可见元素 / 缩进指示 / 页面指示 / 当前行）在排版管理器里绘制
+        let storage = NSTextStorage()
+        let layoutManager = DecorationsLayoutManager()
+        storage.addLayoutManager(layoutManager)
         // 非零初始 frame：SwiftUI 稍后才给 scrollView 实际尺寸，
         // 零尺寸 frame 会让 [.width] 自适应算出多余宽度，导致文字被行号栏遮住
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let container = NSTextContainer(size: NSSize(width: 800, height: CGFloat.greatestFiniteMagnitude))
+        layoutManager.addTextContainer(container)
+        let textView = LiteTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600),
+                                    textContainer: container)
+        context.coordinator.storage = storage
         textView.isRichText = false
         textView.allowsUndo = true
         textView.usesFontPanel = false
@@ -23,7 +33,7 @@ struct CodeTextView: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
-        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.font = AppSettings.shared.editorFont
         textView.textColor = .textColor
         textView.drawsBackground = true
         textView.backgroundColor = .textBackgroundColor
@@ -81,6 +91,7 @@ struct CodeTextView: NSViewRepresentable {
         SyntaxHighlighter.highlight(textView: textView, language: tab.language)
         context.coordinator.highlightedLanguage = tab.language
         context.coordinator.publishStats(from: textView)
+        context.coordinator.applyAppearanceIfNeeded(textView: textView)
         return scrollView
     }
 
@@ -89,6 +100,7 @@ struct CodeTextView: NSViewRepresentable {
         // 输入法组字期间（拼音预输入）视图里是 marked text，与模型必然不一致；
         // 此时回写 string / 选区会立刻中止组字，导致中文无法输入，必须整段跳过
         guard !textView.hasMarkedText() else { return }
+        context.coordinator.applyAppearanceIfNeeded(textView: textView)
         let languageChanged = context.coordinator.highlightedLanguage != tab.language
 
         if textView.string != tab.text {
@@ -121,11 +133,15 @@ struct CodeTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         let tab: EditorTab
+        /// 自建 TextKit 栈的存储，强持有防止被释放
+        var storage: NSTextStorage?
         weak var textView: NSTextView?
         var highlightedLanguage: LanguageDefinition?
         var boundsObserver: NSObjectProtocol?
         /// 已应用过查找高亮的面板状态，避免无变化时重复全文清设
         var appliedFindState: FindState?
+        /// 已应用到文本视图的外观配置；变化时才重设整篇属性
+        var appliedAppearance: EditorAppearanceConfig?
 
         init(tab: EditorTab) {
             self.tab = tab
@@ -138,6 +154,100 @@ struct CodeTextView: NSViewRepresentable {
             }
         }
 
+        /// 设置变化时才整体重应用（全篇属性设置代价高，不能逐键执行）
+        func applyAppearanceIfNeeded(textView: NSTextView) {
+            let config = EditorAppearanceConfig.from(AppSettings.shared)
+            guard config != appliedAppearance else { return }
+            appliedAppearance = config
+            apply(config: config, textView: textView)
+        }
+
+        private func apply(config: EditorAppearanceConfig, textView: NSTextView) {
+            let settings = AppSettings.shared
+            let scrollView = textView.enclosingScrollView
+            let font = settings.editorFont
+
+            // 字体：后续输入与已有文本一并更新
+            if textView.font !== font {
+                textView.font = font
+                if let storage {
+                    storage.addAttribute(.font, value: font,
+                                         range: NSRange(location: 0, length: storage.length))
+                }
+            }
+
+            // 段落样式：行高倍数 / 自动换行缩进 / 书写方向
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineHeightMultiple = CGFloat(max(0.5, min(5, config.lineHeight)))
+            paragraph.baseWritingDirection = config.writingDirection
+            if config.wraps, config.wrapIndent > 0 {
+                let charWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
+                paragraph.headIndent = charWidth * CGFloat(min(32, config.wrapIndent))
+            }
+            textView.defaultParagraphStyle = paragraph
+            textView.typingAttributes[.font] = font
+            textView.typingAttributes[.paragraphStyle] = paragraph
+            textView.typingAttributes[.ligature] = config.ligatures ? 1 : 0
+            if let storage {
+                let full = NSRange(location: 0, length: storage.length)
+                storage.addAttribute(.paragraphStyle, value: paragraph, range: full)
+                storage.addAttribute(.ligature, value: config.ligatures ? 1 : 0, range: full)
+            }
+
+            // 软换行 / 不换行（水平滚动）
+            if config.wraps {
+                textView.isHorizontallyResizable = false
+                textView.autoresizingMask = [.width]
+                textView.textContainer?.widthTracksTextView = true
+                scrollView?.hasHorizontalScroller = false
+            } else {
+                textView.isHorizontallyResizable = true
+                textView.autoresizingMask = []
+                textView.textContainer?.widthTracksTextView = false
+                textView.textContainer?.size.width = 1_000_000
+                scrollView?.hasHorizontalScroller = true
+            }
+
+            // 行号栏显隐
+            scrollView?.rulersVisible = config.lineNumbers
+
+            // 装饰层配置（不可见元素 / 缩进指示 / 页面指示 / 当前行）
+            if let decorations = textView.layoutManager as? DecorationsLayoutManager {
+                decorations.appearance = config
+                decorations.updateCurrentLine(for: textView)
+            }
+
+            // 额外滚动
+            if let liteTextView = textView as? LiteTextView {
+                liteTextView.extraScrollFraction = CGFloat(max(0, min(1, config.extraScroll / 100)))
+                liteTextView.sizeToFit()
+            }
+
+            // 编辑器透明度：不透明时走原生背景；半透明时关闭视图层背景，
+            // 让带透明的窗口背景透出（三层同色叠加会加深透明度）
+            let opacity = max(0.1, min(1, config.opacity / 100))
+            if opacity >= 0.999 {
+                textView.drawsBackground = true
+                scrollView?.drawsBackground = true
+                if let window = textView.window {
+                    window.isOpaque = true
+                    window.backgroundColor = .windowBackgroundColor
+                }
+            } else {
+                textView.drawsBackground = false
+                scrollView?.drawsBackground = false
+                if let window = textView.window {
+                    window.isOpaque = false
+                    window.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(opacity)
+                }
+            }
+
+            // 属性重设会重建字形，查找高亮需按当前状态重建
+            appliedFindState = nil
+            applyFindHighlight(textView: textView, oldState: nil, state: tab.findState)
+            textView.needsDisplay = true
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
             // 组字（marked text）阶段的内容不写入模型、不重刷高亮，
@@ -147,6 +257,9 @@ struct CodeTextView: NSViewRepresentable {
                 highlightedLanguage = tab.language
                 SyntaxHighlighter.highlight(textView: textView, language: tab.language)
                 textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
+                if let decorations = textView.layoutManager as? DecorationsLayoutManager {
+                    decorations.updateCurrentLine(for: textView)
+                }
                 tab.refreshMatches()
             }
             publishStats(from: textView)
@@ -155,6 +268,9 @@ struct CodeTextView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             publishStats(from: textView)
+            if let decorations = textView.layoutManager as? DecorationsLayoutManager {
+                decorations.updateCurrentLine(for: textView)
+            }
         }
 
         /// 把光标与文本统计发布到标签页模型，驱动状态栏刷新

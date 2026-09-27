@@ -137,22 +137,37 @@ final class EditorTab: ObservableObject, Identifiable {
     @Published private(set) var savedLineEnding: LineEnding
     @Published private(set) var isDirty = false
     @Published private(set) var stats: DocumentStats = .empty
+    /// 打开 / 最近一次保存时的文件修改时间，用于外部修改检测
+    var fileModificationDate: Date?
 
     var displayName: String {
         fileURL?.lastPathComponent ?? "未命名"
     }
 
+    /// 未指定编码 / 换行符时取全局设置的默认值；语法按扩展名检测，无文件时取默认语法设置
     init(fileURL: URL? = nil, text: String = "", savedText: String? = nil,
-         encoding: TextEncoding = .utf8, lineEnding: LineEnding = .lf) {
+         encoding: TextEncoding? = nil, lineEnding: LineEnding? = nil) {
+        let settings = AppSettings.shared
+        let resolvedEncoding = encoding ?? settings.defaultEncoding
+        let resolvedLineEnding = lineEnding ?? settings.defaultLineEnding
         self.fileURL = fileURL
-        self.language = LanguageDefinition.detect(from: fileURL)
+        self.language = fileURL != nil
+            ? LanguageDefinition.detect(from: fileURL)
+            : settings.defaultLanguage
         self.text = text
         self.savedText = savedText ?? text
-        self.encoding = encoding
-        self.lineEnding = lineEnding
-        self.savedEncoding = encoding
-        self.savedLineEnding = lineEnding
+        self.encoding = resolvedEncoding
+        self.lineEnding = resolvedLineEnding
+        self.savedEncoding = resolvedEncoding
+        self.savedLineEnding = resolvedLineEnding
         self.isDirty = false
+        self.fileModificationDate = Self.fileDate(at: fileURL)
+    }
+
+    /// 读取文件当前修改时间
+    static func fileDate(at url: URL?) -> Date? {
+        guard let url else { return nil }
+        return try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
     }
 
     /// 保存成功后调用：更新落盘基准与语言（扩展名可能变化）
@@ -162,6 +177,7 @@ final class EditorTab: ObservableObject, Identifiable {
         savedEncoding = encoding
         savedLineEnding = lineEnding
         language = LanguageDefinition.detect(from: url)
+        fileModificationDate = Self.fileDate(at: url)
         isDirty = false
     }
 

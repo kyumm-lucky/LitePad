@@ -2,7 +2,7 @@ import Foundation
 
 /// 骨架版语言定义：用正则规则描述注释 / 字符串 / 关键词等。
 /// 后续如需更精准的解析，可整体替换为 tree-sitter grammar。
-struct LanguageDefinition: Equatable, Identifiable {
+struct LanguageDefinition: Equatable, Hashable, Identifiable {
     let id: String
     let displayName: String
     let extensions: [String]

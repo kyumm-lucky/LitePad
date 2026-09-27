@@ -5,9 +5,13 @@ import AppKit
 final class LineNumberRulerView: NSRulerView {
     private weak var textView: NSTextView?
     private let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-    private let gutterColor = NSColor.textBackgroundColor
     private let labelColor = NSColor.secondaryLabelColor
     private let separatorColor = NSColor.separatorColor
+    /// 行号栏底色跟随编辑器透明度，半透明时不产生整块白色遮挡
+    private var gutterColor: NSColor {
+        NSColor.textBackgroundColor.withAlphaComponent(
+            CGFloat(max(0.1, min(1, AppSettings.shared.editorOpacity / 100))))
+    }
 
     init(textView: NSTextView) {
         self.textView = textView
