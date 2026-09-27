@@ -53,10 +53,12 @@ final class LineNumberRulerView: NSRulerView {
         }
 
         let content = textView.string as NSString
-        let textOrigin = convert(NSPoint.zero, from: textView)
+        // fragment.minY 是文本容器内坐标（不含 textContainerInset），换算到行号栏必须补上顶部内边距，
+        // 否则所有行号整体偏高一个 inset（约 8pt）
+        let baseY = convert(NSPoint.zero, from: textView).y + textView.textContainerInset.height
 
         if content.length == 0 {
-            drawNumber(1, atY: textOrigin.y + textView.textContainerInset.height + 2)
+            drawNumber(1, atY: baseY + 2)
             return
         }
 
@@ -76,7 +78,7 @@ final class LineNumberRulerView: NSRulerView {
             let glyphs = layoutManager.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
             if glyphs.location != NSNotFound, glyphs.length > 0 {
                 let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
-                drawNumber(lineNumber, atY: fragment.minY + textOrigin.y + (fragment.height - labelHeight) / 2)
+                drawNumber(lineNumber, atY: baseY + fragment.minY + (fragment.height - labelHeight) / 2)
                 lastFragment = fragment
                 lineNumber += 1
             }
@@ -88,9 +90,9 @@ final class LineNumberRulerView: NSRulerView {
            content.character(at: content.length - 1) == 0x0A {
             let y: CGFloat
             if let lastFragment {
-                y = lastFragment.minY + textOrigin.y + lastFragment.height + (lastFragment.height - labelHeight) / 2
+                y = baseY + lastFragment.minY + lastFragment.height + (lastFragment.height - labelHeight) / 2
             } else {
-                y = textOrigin.y + textView.textContainerInset.height + 2
+                y = baseY + 2
             }
             drawNumber(lineNumber, atY: y)
         }
