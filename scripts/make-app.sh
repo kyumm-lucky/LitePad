@@ -16,6 +16,8 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
+# 声明简体中文本地化：系统提供的菜单（文件/编辑/显示/窗口/帮助）跟随中文
+cp -R "Resources/zh-Hans.lproj" "$APP_DIR/Contents/Resources/"
 
 echo "==> ad-hoc 签名"
 codesign --force -s - "$APP_DIR"
