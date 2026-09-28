@@ -33,18 +33,15 @@ struct FindPanelView: View {
                 panelButton("arrow.2.squarepath", "全部替换") { tab.replaceHandler?(true) }
             }
             HStack(spacing: 12) {
-                Toggle("正则", isOn: optionBinding(\.useRegex))
-                Toggle("大小写", isOn: optionBinding(\.caseSensitive))
-                Toggle("全词", isOn: optionBinding(\.wholeWord))
+                LitePadToggle(title: "正则", isOn: optionBinding(\.useRegex))
+                LitePadToggle(title: "大小写", isOn: optionBinding(\.caseSensitive))
+                LitePadToggle(title: "全词", isOn: optionBinding(\.wholeWord))
             }
-            .toggleStyle(.checkbox)
-            .controlSize(.small)
-            .font(.system(size: 11))
         }
         .padding(8)
         .frame(width: 380, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+        .background(FrostedSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous)))
+        .shadow(color: .black.opacity(0.2), radius: 14, y: 5)
         .onExitCommand { tab.findState = nil }
         .onAppear { queryFocused = true }
     }
@@ -106,6 +103,8 @@ struct FindPanelHost: View {
             FindPanelView(tab: tab)
                 .padding(.top, 6)
                 .padding(.trailing, 10)
+                .transition(Motion.slideTransition(from: .top))
+                .animation(Motion.panel, value: tab.findState != nil)
         }
     }
 }

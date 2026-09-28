@@ -229,6 +229,12 @@ final class EditorTab: ObservableObject, Identifiable {
     var findNavigationHandler: ((Int) -> Void)?
     /// 替换回调：由 CodeTextView 安装（撤销协议路径必须在视图层执行）；参数 true = 全部替换
     var replaceHandler: ((Bool) -> Void)?
+    /// 编辑器文本来源：由 CodeTextView 安装，返回当前选区文本（无选区时为空串）与全文，
+    /// 供工具面板取文本
+    var textSourceProvider: (() -> (selection: String, fullText: String))?
+    /// 工具结果写回：由 CodeTextView 安装（撤销协议路径必须在视图层执行）；
+    /// useSelection 为真替换当前选区（无选区则插入光标处），为假替换全文
+    var writeBackHandler: ((String, Bool) -> Void)?
     /// 查找/替换面板状态；nil 表示面板关闭
     @Published var findState: FindState?
 

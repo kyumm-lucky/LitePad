@@ -234,6 +234,31 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(statusBarCaretColumn, forKey: "settings.sb.caretColumn") }
     }
 
+    // MARK: - 工具抽屉
+
+    /// 各工具的面板宽度（键为工具 id）：工具面板是窗口右缘的通栏抽屉，宽度可拖拽调整
+    @Published private(set) var toolsPanelWidths: [String: Double] {
+        didSet { defaults.set(toolsPanelWidths, forKey: "settings.toolsPanelWidths") }
+    }
+
+    /// 抽屉宽度下限：再窄控件行与对比两栏都排不下
+    static let toolsPanelMinWidth: Double = 360
+
+    /// 当前工具的面板宽度：没调过时按工具给默认值
+    func toolsPanelWidth(for kind: TextToolKind) -> Double {
+        toolsPanelWidths[kind.rawValue] ?? Self.defaultToolsPanelWidth(for: kind)
+    }
+
+    /// 松手后落盘：拖拽中的实时宽度由会话持有，避免每帧写 UserDefaults
+    func setToolsPanelWidth(_ width: Double, for kind: TextToolKind) {
+        toolsPanelWidths[kind.rawValue] = width
+    }
+
+    /// 默认宽度：对比工具是 A/B 两栏，比编码转换宽一些
+    static func defaultToolsPanelWidth(for kind: TextToolKind) -> Double {
+        kind.isConverter ? 420 : 620
+    }
+
     // MARK: - 格式
 
     @Published var defaultLineEnding: LineEnding {
@@ -332,6 +357,7 @@ final class AppSettings: ObservableObject {
         statusBarCaretOffset = defaults.object(forKey: "settings.sb.caretOffset") as? Bool ?? true
         statusBarCaretLine = defaults.object(forKey: "settings.sb.caretLine") as? Bool ?? true
         statusBarCaretColumn = defaults.object(forKey: "settings.sb.caretColumn") as? Bool ?? true
+        toolsPanelWidths = defaults.dictionary(forKey: "settings.toolsPanelWidths") as? [String: Double] ?? [:]
 
         defaultLineEnding = defaults.string(forKey: "settings.defaultLineEnding")
             .flatMap(LineEnding.init(rawValue:)) ?? .lf

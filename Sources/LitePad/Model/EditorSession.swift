@@ -6,12 +6,20 @@ import Combine
 final class EditorSession: ObservableObject {
     @Published private(set) var tabs: [EditorTab] = []
     @Published var selectedTabIndex: Int = 0
-    /// 状态栏当前展开的下拉面板；nil 表示全部收起
-    @Published var expandedMenu: StatusBarMenuKind?
+    /// 当前展开的下拉面板（状态栏三项 / 工具）；nil 表示全部收起
+    @Published var expandedMenu: WindowMenuKind?
     /// 面板中悬停的选项行索引（用于悬停高亮）
     @Published var hoveredPanelIndex: Int?
     /// 最近打开的文件（驱动"打开最近"菜单）
     @Published var recentFiles: [URL] = RecentFiles.load()
+    /// 工具面板当前打开的工具；nil 表示面板关闭
+    @Published var activeTool: TextToolKind?
+    /// 主窗口左侧设置抽屉是否展开
+    @Published var isSettingsPresented = false
+    /// 工具抽屉的实时宽度：拖拽调宽逐帧更新，松手才落盘（同时供下拉面板避让抽屉）
+    @Published var toolsDrawerWidth = CGFloat(AppSettings.defaultToolsPanelWidth(for: .unicode))
+    /// 工具面板的输入 / 选项 / 结果
+    let tools = TextToolsState()
 
     /// 启动会话恢复的 UserDefaults 键
     private static let sessionKey = "lastSession.urls"
@@ -275,6 +283,60 @@ final class EditorSession: ObservableObject {
         } else {
             tab.findState = nil
         }
+    }
+
+    // MARK: - 工具抽屉
+
+    /// 打开工具抽屉并切换工具：先切工具再取文本，保证取到的文本填入正确的一栏
+    func openTool(_ kind: TextToolKind) {
+        guard let tab = selectedTab else { return }
+        activeTool = kind
+        toolsDrawerWidth = CGFloat(AppSettings.shared.toolsPanelWidth(for: kind))
+        tools.select(kind: kind)
+        seedToolsFromEditor(tab: tab)
+    }
+
+    /// 关闭工具面板（输入与选项保留，下次打开继续用）
+    func closeTool() {
+        activeTool = nil
+    }
+
+    // MARK: - 设置抽屉
+
+    /// 切换主窗口设置抽屉；打开时收起其他悬浮面板，避免左右抽屉与下拉层叠加
+    func toggleSettings() {
+        isSettingsPresented.toggle()
+        guard isSettingsPresented else { return }
+        expandedMenu = nil
+        hoveredPanelIndex = nil
+        activeTool = nil
+    }
+
+    /// 关闭主窗口设置抽屉
+    func closeSettings() {
+        isSettingsPresented = false
+    }
+
+    /// 拖拽调宽：实时宽度只驱动布局，落盘由 commitToolsDrawerWidth 在松手时完成
+    func resizeToolsDrawer(to width: CGFloat) {
+        toolsDrawerWidth = width
+    }
+
+    /// 按当前工具记住抽屉宽度
+    func commitToolsDrawerWidth() {
+        guard let kind = activeTool else { return }
+        AppSettings.shared.setToolsPanelWidth(Double(toolsDrawerWidth), for: kind)
+    }
+
+    /// 把编辑器当前选区（无选区取全文）送入工具面板；面板内「取编辑器」按钮复用
+    func seedToolsFromEditor(tab: EditorTab) {
+        let source = tab.textSourceProvider?() ?? (selection: "", fullText: tab.text)
+        tools.seed(from: source.selection.isEmpty ? source.fullText : source.selection)
+    }
+
+    /// 把工具结果写回编辑器：replaceSelection 为真替换选区（无选区则插入光标处），为假替换全文
+    func writeBackToolsResult(_ text: String, replaceSelection: Bool, tab: EditorTab) {
+        tab.writeBackHandler?(text, replaceSelection)
     }
 
     /// 弹出行号输入框并跳转到指定行；非法输入蜂鸣且不跳转

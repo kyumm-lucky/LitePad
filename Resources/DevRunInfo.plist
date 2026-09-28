@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 仅供裸二进制开发运行使用：以 __info_plist 段嵌入可执行文件，
+	     使 Bundle.main 声明简体中文本地化，AppKit/SwiftUI 标准菜单才会跟随中文。
+	     打包成 .app 时以 Contents/Info.plist 为准，本文件不参与。 -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh-Hans</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>zh-Hans</string>
+	</array>
+</dict>
+</plist>

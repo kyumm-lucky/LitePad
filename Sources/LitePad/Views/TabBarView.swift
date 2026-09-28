@@ -1,37 +1,96 @@
 import SwiftUI
 
-/// Notepad++ 式页内标签栏：标签可点击切换、单个关闭，"+" 按钮新建
+/// Notepad++ 式页内标签栏：标签可点击切换、单个关闭，"+" 按钮新建，右端齿轮打开设置
 struct TabBarView: View {
     @EnvironmentObject private var session: EditorSession
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                ForEach(Array(session.tabs.enumerated()), id: \.element.id) { index, tab in
-                    TabButtonView(
-                        tab: tab,
-                        isSelected: index == session.selectedTabIndex,
-                        onSelect: { session.selectedTabIndex = index },
-                        onClose: { session.closeTab(at: index) }
-                    )
+        HStack(spacing: 0) {
+            // 标签与 "+" 随数量横向滚动；齿轮固定在右缘，不随标签滚动移出视野
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    ForEach(Array(session.tabs.enumerated()), id: \.element.id) { index, tab in
+                        TabButtonView(
+                            tab: tab,
+                            isSelected: index == session.selectedTabIndex,
+                            onSelect: { session.selectedTabIndex = index },
+                            onClose: { session.closeTab(at: index) }
+                        )
+                    }
+                    Button(action: { session.newTab() }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(width: 26, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("新建标签页")
                 }
-                Button(action: { session.newTab() }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .medium))
-                        .frame(width: 26, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("新建标签页")
+                .padding(.horizontal, 8)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+
+            settingsButton
+                .buttonStyle(.plain)
+                .foregroundStyle(session.isSettingsPresented ? Color.accentColor : Color.secondary)
+                .animation(Motion.panel, value: session.isSettingsPresented)
+                .help("设置")
+
+            // 工具入口：扳手按钮，展开的下拉与状态栏下拉同一套面板样式
+            toolsButton
+                .buttonStyle(.plain)
+                .foregroundStyle(toolsButtonActive ? Color.accentColor : Color.secondary)
+                // 配色与图标转动共用一条弹簧：按钮"拧一下"的手感与下拉、抽屉同一拍
+                .animation(Motion.panel, value: toolsButtonActive)
+                .help("工具")
+                .padding(.trailing, 6)
         }
         .frame(height: 34)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(alignment: .bottom) { Divider() }
+        .background(FrostedSurface(shape: Rectangle()))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(InterfaceStyle.borderStrong)
+                .frame(height: 1)
+        }
     }
+
+    /// 扳手按钮的激活态：下拉展开中、或抽屉已打开——两者都由这个按钮发起，收起后一同复位
+    private var toolsButtonActive: Bool {
+        session.expandedMenu == .tools || session.activeTool != nil
+    }
+
+    /// 右上角设置按钮：打开主窗口左侧设置抽屉
+    private var settingsButton: some View {
+        Button {
+            session.toggleSettings()
+        } label: {
+            gearIcon
+        }
+    }
+
+    private var gearIcon: some View {
+        Image(systemName: session.isSettingsPresented ? "gearshape.fill" : "gearshape")
+            .font(.system(size: 12, weight: .medium))
+            .frame(width: 26, height: 22)
+            .contentShape(Rectangle())
+            .accessibilityLabel("设置")
+    }
+
+    /// 扳手按钮：展开 / 收起工具下拉（其中列出五个工具，当前打开的一项带勾选）。
+    /// 激活时扳手逆时针拧转 20° 并染上强调色，是"工具已打开"最直接的提示
+    private var toolsButton: some View {
+        Button {
+            session.expandedMenu = session.expandedMenu == .tools ? nil : .tools
+        } label: {
+            Image(systemName: "wrench")
+                .font(.system(size: 12, weight: .medium))
+                .rotationEffect(.degrees(toolsButtonActive ? -20 : 0))
+                .frame(width: 26, height: 22)
+                .contentShape(Rectangle())
+                .accessibilityLabel("工具")
+        }
+    }
+
 }
 
 private struct TabButtonView: View {
@@ -39,6 +98,7 @@ private struct TabButtonView: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
+    @StateObject private var hover = InterfaceHoverState()
 
     var body: some View {
         HStack(spacing: 6) {
@@ -63,15 +123,26 @@ private struct TabButtonView: View {
         .padding(.horizontal, 10)
         .frame(height: 26)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? Color(nsColor: .controlBackgroundColor) : Color.clear)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(isSelected ? InterfaceStyle.raised : (hover.isHovered ? InterfaceStyle.accentSoft : Color.clear))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(isSelected ? Color(nsColor: .separatorColor).opacity(0.6) : Color.clear, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(isSelected ? InterfaceStyle.accentBorder : Color.clear, lineWidth: 1)
         )
+        .overlay(alignment: .bottom) {
+            if isSelected {
+                Capsule()
+                    .fill(InterfaceStyle.accent)
+                    .frame(height: 2)
+                    .padding(.horizontal, 9)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
+        .onHover { hover.isHovered = $0 }
+        .animation(Motion.control, value: isSelected)
     }
 
     private var iconSymbol: String {

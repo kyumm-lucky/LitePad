@@ -1,37 +1,44 @@
 import SwiftUI
 import AppKit
 
-/// 状态栏弹出面板的种类
-enum StatusBarMenuKind {
+/// 窗口内弹出面板的种类：状态栏三项在右下，工具下拉在右上（标签栏扳手按钮下方）
+enum WindowMenuKind {
     case encoding
     case lineEnding
     case language
+    case tools
 }
 
-/// 主界面：标签栏 + 编辑区 + 状态栏
+/// 主界面：标签栏 + 编辑区 + 状态栏；工具抽屉贴窗口右缘，打开时从右向左滑入并挤窄主栏
 struct ContentView: View {
     @EnvironmentObject private var session: EditorSession
     @ObservedObject private var settings = AppSettings.shared
+    /// 内容区宽度：抽屉宽度上限与拖拽夹取用（本工程无 @State 宏，测量值用轻量对象承载）
+    @StateObject private var metrics = LayoutMetrics()
+    /// 抽屉打开时给编辑区留出的最小宽度
+    private static let editorMinWidth: CGFloat = 320
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             WindowSizeSync()
-            VStack(spacing: 0) {
-                TabBarView()
-                if let tab = session.selectedTab {
-                    // 切换标签时以 id 重建编辑器，避免不同标签间文本与选区串扰
-                    CodeTextView(tab: tab)
-                        .id(tab.id)
-                        // 查找面板挂编辑区右上；FindPanelHost 自行观察 tab 的 findState
-                        .overlay(alignment: .topTrailing) {
-                            FindPanelHost(tab: tab)
-                        }
-                } else {
-                    emptyView
+            HStack(spacing: 0) {
+                mainColumn
+                if let tab = session.selectedTab, session.activeTool != nil {
+                    ToolsDrawer(tools: session.tools,
+                                tab: tab,
+                                width: drawerWidth,
+                                onResize: { session.resizeToolsDrawer(to: clampedDrawerWidth($0)) },
+                                onResizeCommit: { session.commitToolsDrawerWidth() })
+                        .transition(Motion.slideTransition(from: .trailing))
                 }
-                statusBar(for: session.selectedTab)
             }
+            .background(GeometryReader { proxy in
+                Color.clear
+                    .onAppear { metrics.width = proxy.size.width }
+                    .onChange(of: proxy.size.width) { metrics.width = $0 }
+            })
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(FrostedSurface(shape: Rectangle()))
 
             // 窗口标题跟随当前标签（ContentView 不观察 EditorTab，脏状态刷新由独立视图承担）
             if let tab = session.selectedTab {
@@ -44,19 +51,85 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            if let kind = session.expandedMenu, let tab = session.selectedTab {
-                // 原生容器声明箭头光标，内部承载面板内容
+            if let kind = session.expandedMenu, let tab = session.selectedTab, kind != .tools {
+                // 原生容器声明箭头光标，内部承载面板内容；抽屉打开时左移，仍贴着状态栏按钮。
+                // 出场动画在 OptionPanel 内部完成：容器由 NSHostingView 承载，
+                // 位移或透明度过渡加在这一层既不渲染，还会让宿主每帧重新布局
                 PanelCursorContainer(content: menuPanel(for: kind, tab: tab))
                     .fixedSize()
-                    .padding(.trailing, 8)
+                    .padding(.trailing, 8 + drawerWidth)
                     .padding(.bottom, 30)
             }
+
+            if session.expandedMenu == .tools, let tab = session.selectedTab {
+                // 工具下拉：贴窗口右缘、挂在标签栏（34pt）下方；抽屉打开时让到抽屉左侧的扳手处
+                PanelCursorContainer(content: menuPanel(for: .tools, tab: tab))
+                    .fixedSize()
+                    .padding(.trailing, 6 + drawerWidth)
+                    .padding(.top, 36)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            }
+
+            if session.isSettingsPresented {
+                // 设置抽屉从左侧进入；点击抽屉外部收起，避免遮挡后仍可操作编辑器
+                DismissLayer(onClose: { session.closeSettings() })
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .zIndex(5)
+
+                SettingsView(onClose: { session.closeSettings() })
+                    .frame(width: SettingsView.drawerWidth)
+                    .frame(maxHeight: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity,
+                           maxHeight: .infinity,
+                           alignment: .leading)
+                    .transition(Motion.slideTransition(from: .leading))
+                    .zIndex(6)
+            }
         }
+        // 抽屉进出只随工具开关动画；拖拽调宽不触发该值，因而不带缓动、跟手。
+        // 键值取 activeTool（而非抽屉宽度）同时覆盖了切换工具时的宽度变化，
+        // 以及抽屉开合时下拉面板的让位位移，三者共用同一条曲线
+        .animation(Motion.drawer, value: session.activeTool)
+        .animation(Motion.drawer, value: session.isSettingsPresented)
     }
 
-    /// 右下角的选项面板：绘制在窗口坐标系内（右缘贴窗口右缘、底边贴状态栏上方），永不超出 App；
+    /// 主栏：标签栏 + 编辑区 + 状态栏，右侧给工具抽屉腾出宽度
+    private var mainColumn: some View {
+        VStack(spacing: 0) {
+            TabBarView()
+            if let tab = session.selectedTab {
+                // 切换标签时以 id 重建编辑器，避免不同标签间文本与选区串扰
+                CodeTextView(tab: tab)
+                    .id(tab.id)
+                    // 查找面板挂编辑区右上；工具抽屉打开时正好落在抽屉左侧
+                    .overlay(alignment: .topTrailing) {
+                        FindPanelHost(tab: tab)
+                    }
+            } else {
+                emptyView
+            }
+            statusBar(for: session.selectedTab)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.clear)
+    }
+
+    /// 抽屉当前生效宽度；关闭时为 0（下拉面板据此避让）
+    private var drawerWidth: CGFloat {
+        session.activeTool == nil ? 0 : clampedDrawerWidth(session.toolsDrawerWidth)
+    }
+
+    /// 抽屉宽度夹取：下限保证控件与对比两栏排得下，上限给编辑区留出空间；
+    /// 窗口尺寸尚未测到时只夹下限，避免抽屉刚打开就被压到最小值
+    private func clampedDrawerWidth(_ width: CGFloat) -> CGFloat {
+        let minimum = CGFloat(AppSettings.toolsPanelMinWidth)
+        guard metrics.width > 0 else { return max(width, minimum) }
+        return min(max(width, minimum), max(minimum, metrics.width - Self.editorMinWidth))
+    }
+
+    /// 选项面板内容：状态栏三项在右下角、工具下拉在右上角，位置由 body 统一指定；
     /// 各面板只提供标题/选项/当前项/业务赋值，悬停清理与收起面板统一在此收尾
-    private func menuPanel(for kind: StatusBarMenuKind, tab: EditorTab) -> OptionPanel {
+    private func menuPanel(for kind: WindowMenuKind, tab: EditorTab) -> OptionPanel {
         let option: (title: String, options: [String], selectedIndex: Int?, commit: (Int) -> Void)
         switch kind {
         case .encoding:
@@ -74,17 +147,27 @@ struct ContentView: View {
                       options: LanguageDefinition.all.map(\.displayName),
                       selectedIndex: LanguageDefinition.all.firstIndex(of: tab.language),
                       commit: { index in tab.language = LanguageDefinition.all[index] })
+        case .tools:
+            option = (title: "工具",
+                      options: TextToolKind.allCases.map(\.displayName),
+                      selectedIndex: session.activeTool.flatMap { TextToolKind.allCases.firstIndex(of: $0) },
+                      commit: { index in session.openTool(TextToolKind.allCases[index]) })
         }
         return OptionPanel(title: option.title,
                            options: option.options,
                            selectedIndex: option.selectedIndex,
                            hoveredIndex: session.hoveredPanelIndex,
+                           // 工具下拉挂在标签栏下方，自上方落下；状态栏面板自下方升起
+                           revealOffset: kind == .tools ? -6 : 6,
                            onSelect: { index in
                                option.commit(index)
                                session.hoveredPanelIndex = nil
                                session.expandedMenu = nil
                            },
-                           onHover: { session.hoveredPanelIndex = $0 })
+                           onHover: { session.hoveredPanelIndex = $0 },
+                           optionSymbols: kind == .tools
+                               ? TextToolKind.allCases.map(\.symbolName)
+                               : nil)
     }
 
     private var emptyView: some View {
@@ -97,6 +180,7 @@ struct ContentView: View {
             Button("新建标签页") { session.newTab() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(FrostedSurface(shape: Rectangle()))
     }
 
     @ViewBuilder
@@ -119,11 +203,16 @@ struct ContentView: View {
     @ViewBuilder
     private var statusBarBackground: some View {
         if settings.statusBarStyle == .tinted {
-            Rectangle().fill(.regularMaterial)
+            FrostedSurface(shape: Rectangle())
         } else {
-            Color(nsColor: .windowBackgroundColor)
+            InterfaceStyle.window
         }
     }
+}
+
+/// 内容区宽度的测量结果：抽屉宽度上限与拖拽夹取用（本工程无 @State 宏，测量值用轻量对象承载）
+private final class LayoutMetrics: ObservableObject {
+    @Published var width: CGFloat = 0
 }
 
 /// 启动时按设置应用固定窗口大小（仅新窗口出现时生效一次；空值表示自动）
@@ -170,7 +259,7 @@ private struct WindowTitleSync: View {
 private struct StatusBarView: View {
     @ObservedObject var tab: EditorTab
     @ObservedObject private var settings = AppSettings.shared
-    let onOpen: (StatusBarMenuKind) -> Void
+    let onOpen: (WindowMenuKind) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -199,15 +288,20 @@ private struct StatusBarView: View {
             StatusBarMenu(label: tab.lineEnding.displayName, onOpen: { onOpen(.lineEnding) })
         }
         .font(.system(size: 11).monospacedDigit())
-        .foregroundStyle(.secondary)
+        .foregroundStyle(InterfaceStyle.muted)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background {
             if settings.statusBarStyle == .tinted {
-                Rectangle().fill(.regularMaterial)
+                FrostedSurface(shape: Rectangle())
             } else {
-                Color(nsColor: .windowBackgroundColor)
+                InterfaceStyle.window
             }
+        }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(InterfaceStyle.borderStrong)
+                .frame(height: 1)
         }
     }
 }
@@ -243,6 +337,7 @@ private final class MenuButtonNSView: NSView {
     private var label = ""
     private var onOpen: (() -> Void)?
     private var labelAttributed: NSAttributedString?
+    private var isHovered = false
 
     func update(label: String, onOpen: @escaping () -> Void) {
         let labelChanged = label != self.label
@@ -257,7 +352,7 @@ private final class MenuButtonNSView: NSView {
     private func rebuildLabel() {
         let text = NSMutableAttributedString(string: label + "  ", attributes: [
             .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .foregroundColor: NSColor.labelColor,
         ])
         if let chevronImage = NSImage(systemSymbolName: "chevron.up.chevron.down",
                                       accessibilityDescription: nil)?
@@ -272,164 +367,49 @@ private final class MenuButtonNSView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        labelAttributed.map { NSSize(width: $0.size().width + 4, height: $0.size().height + 2) }
+        labelAttributed.map { NSSize(width: $0.size().width + 16, height: max($0.size().height + 8, 24)) }
             ?? NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        labelAttributed?.draw(at: NSPoint(x: 2, y: (bounds.height - (labelAttributed?.size().height ?? 0)) / 2))
+        let rect = bounds.insetBy(dx: 0, dy: 1)
+        let background = isHovered
+            ? NSColor.controlAccentColor.withAlphaComponent(0.12)
+            : NSColor.controlBackgroundColor
+        background.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+
+        labelAttributed?.draw(at: NSPoint(x: 8,
+                                          y: (bounds.height - (labelAttributed?.size().height ?? 0)) / 2))
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseEnteredAndExited, .activeInKeyWindow],
+                                       owner: self,
+                                       userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        rebuildLabel()
     }
 
     override func mouseUp(with event: NSEvent) {
         onOpen?()
-    }
-}
-
-/// 窗口内绘制的选项面板：文字 11pt 灰色与状态栏一致，当前项带勾选标记，悬停行高亮；
-/// 由 ContentView 定位在状态栏上方、窗口右缘内侧，永不超出 App
-private struct OptionPanel: View {
-    let title: String
-    let options: [String]
-    let selectedIndex: Int?
-    let hoveredIndex: Int?
-    let onSelect: (Int) -> Void
-    let onHover: (Int?) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
-            ForEach(options.indices, id: \.self) { index in
-                Button {
-                    onSelect(index)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 8, weight: .bold))
-                            .opacity(index == selectedIndex ? 1 : 0)
-                        Text(options[index])
-                        Spacer(minLength: 0)
-                    }
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.accentColor.opacity(hoveredIndex == index ? 0.18 : 0))
-                    )
-                    .contentShape(Rectangle())
-                    .onHover { hovering in
-                        onHover(hovering ? index : nil)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.vertical, 4)
-        .frame(width: 200, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(ArrowCursorOverlay())
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
-    }
-}
-
-/// 覆盖在面板最上层的透明视图：强制箭头光标。
-/// SwiftUI 文本内容会注册 I-beam 光标区域且比祖先视图的光标矩形更优先，
-/// 所以必须在顶层再盖一层：不拦截点击（hitTest 返回 nil），
-/// 并通过 cursorUpdate / mouseMoved 事件持续把光标设回箭头
-private struct ArrowCursorOverlay: NSViewRepresentable {
-    func makeNSView(context: Context) -> ArrowCursorNSView { ArrowCursorNSView() }
-    func updateNSView(_ view: ArrowCursorNSView, context: Context) {}
-}
-
-private final class ArrowCursorNSView: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        for area in trackingAreas { removeTrackingArea(area) }
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways],
-            owner: self,
-            userInfo: nil
-        ))
-    }
-
-    override func cursorUpdate(with event: NSEvent) {
-        NSCursor.arrow.set()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        NSCursor.arrow.set()
-    }
-}
-
-/// 面板的原生容器：声明箭头光标（SwiftUI 内容本身不参与光标管理，
-/// 否则会保持下层编辑器的 I-beam 竖线光标），内部用 NSHostingView 承载面板内容
-private struct PanelCursorContainer: NSViewRepresentable {
-    let content: OptionPanel
-
-    func makeNSView(context: Context) -> PanelCursorNSView {
-        let container = PanelCursorNSView()
-        install(content: content, in: container)
-        return container
-    }
-
-    func updateNSView(_ view: PanelCursorNSView, context: Context) {
-        install(content: content, in: view)
-    }
-
-    private func install(content: OptionPanel, in container: PanelCursorNSView) {
-        if let hosting = container.subviews.first as? NSHostingView<OptionPanel> {
-            hosting.rootView = content
-        } else {
-            let hosting = NSHostingView(rootView: content)
-            hosting.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(hosting)
-            NSLayoutConstraint.activate([
-                hosting.topAnchor.constraint(equalTo: container.topAnchor),
-                hosting.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-                hosting.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                hosting.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            ])
-        }
-    }
-}
-
-private final class PanelCursorNSView: NSView {
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .arrow)
-    }
-}
-
-/// 面板展开时覆盖全窗口的点击层：光标为箭头，点击任意位置收起面板
-private struct DismissLayer: NSViewRepresentable {
-    let onClose: () -> Void
-
-    func makeNSView(context: Context) -> DismissCursorNSView {
-        let view = DismissCursorNSView()
-        view.onClose = onClose
-        return view
-    }
-
-    func updateNSView(_ view: DismissCursorNSView, context: Context) {
-        view.onClose = onClose
-    }
-}
-
-private final class DismissCursorNSView: NSView {
-    var onClose: (() -> Void)?
-
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .arrow)
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        onClose?()
     }
 }

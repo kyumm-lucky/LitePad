@@ -43,10 +43,16 @@ struct LitePadApp: App {
                 Button("关闭标签页") { session.closeSelectedTab() }
                     .keyboardShortcut("w", modifiers: .command)
             }
-            // 应用菜单「设置…」由 Settings 场景自动插入（系统本地化，含 ⌘, 快捷键），无需显式声明
-        }
-        Settings {
-            SettingsView()
+            CommandGroup(replacing: .appSettings) {
+                Button("设置…") { session.toggleSettings() }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
+            // 菜单栏「工具」：与标题栏「工具」下拉同一入口，供键盘 / 触控板访问
+            CommandMenu("工具") {
+                ForEach(TextToolKind.allCases) { kind in
+                    Button(kind.displayName) { session.openTool(kind) }
+                }
+            }
         }
     }
 }

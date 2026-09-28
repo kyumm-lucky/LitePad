@@ -9,6 +9,13 @@ macOS 原生轻量文本编辑器骨架：Swift + SwiftUI 外壳 + AppKit `NSTex
 - **语法高亮**（正则版，按扩展名自动识别）：HTML / XML / SQL / Java / Python / JavaScript / JSON，其余按纯文本处理
 - **行号栏**：随滚动与编辑刷新
 - **未保存保护**：关闭有更改的标签时弹窗（保存 / 不保存 / 取消）；标签页与状态栏显示未保存状态
+- **工具**（标签栏右侧扳手按钮下拉，样式与状态栏下拉一致；菜单栏「工具」同入口）：窗口右缘滑出的通栏抽屉（高度与窗口一致，弹簧曲线滑入滑出并带左侧投影），左缘可拖拽调宽（悬停时亮起提示条），各工具分别记住自己的宽度，输入默认取编辑器选区（无选区取全文），结果可复制或写回编辑器（`Cmd+Z` 可回滚）
+  - **Unicode 转义**：`\uXXXX`（非 BMP 用代理对）编解码，解码兼容 `\u{XXXXX}`、`\xXX`、`\UXXXXXXXX`、`U+XXXX`
+  - **ASCII 码**：字符 ⇄ 码值数字串（十进制 / 十六进制，含中文等非 ASCII 字符），解码兼容 `0x` 前缀与逗号 / 分号 / 换行分隔
+  - **URL 编码**：UTF-8 百分号编解码，可选空格编码为 `+`
+  - **Base64**：编解码，支持 URL 安全变体（`-` `_`、省略 `=`）；解码忽略空白换行，非 UTF-8 结果给出提示
+  - **字符串对比**：A / B 两栏（A 可取编辑器选区、B 可取其他标签页）逐行对比，差异行红绿标记 + 行内字符级高亮，可选忽略大小写与行首尾空白，差异可导出为 `+` / `-` 文本
+  - **动效**：切换分段控件时选中胶囊像一滴水先横向拉长再回弹收回（`Views/LiquidSegmented.swift`，自绘并带无障碍语义）；切换工具时面板内容按工具在列表中的前后关系定向推入推出；标签栏扳手在工具打开时拧转并染强调色。所有曲线集中在 `Views/Motion.swift`，并遵循系统「减弱动态效果」设置
 - **打包**：`make app` 一键产出 `.app`（ad-hoc 签名），`make dmg` 产出带拖拽安装链接的 DMG
 
 ## 环境要求
@@ -35,7 +42,11 @@ LitePad/
 │   ├── LitePadApp.swift           # @main 入口、菜单与快捷键
 │   ├── Model/
 │   │   ├── EditorTab.swift        # 单个标签页的文档状态（文本、文件、语言、脏标记）
-│   │   └── EditorSession.swift    # 标签页会话：新建/打开/保存/关闭
+│   │   ├── EditorSession.swift    # 标签页会话：新建/打开/保存/关闭
+│   │   └── TextTools.swift        # 工具种类与工具面板状态（输入 / 选项 / 结果）
+│   ├── Tools/
+│   │   ├── TextConverters.swift   # Unicode 转义 / ASCII 码 / URL 百分号 / Base64 纯逻辑
+│   │   └── TextDiff.swift         # 字符串对比：行级差异 + 行内字符级差异
 │   ├── Editor/
 │   │   ├── CodeTextView.swift     # NSTextView 的 NSViewRepresentable 封装
 │   │   ├── LanguageDefinition.swift # 各语言的正则规则表
@@ -43,7 +54,10 @@ LitePad/
 │   │   └── LineNumberRulerView.swift # 行号栏
 │   └── Views/
 │       ├── ContentView.swift      # 标签栏 + 编辑区 + 状态栏
-│       └── TabBarView.swift       # 页内标签栏
+│       ├── TabBarView.swift       # 页内标签栏
+│       ├── OptionPanelView.swift  # 窗口内下拉面板（状态栏 / 工具 / 设置页共用样式与点击层）
+│       └── Tools/
+│           └── ToolsPanelView.swift    # 工具抽屉：右缘通栏 + 左缘拖拽调宽，编码转换 + 字符串对比
 ├── Resources/Info.plist           # App 包描述（由打包脚本使用）
 ├── scripts/make-app.sh            # 编译并组装 .app
 └── scripts/make-dmg.sh            # 生成 DMG

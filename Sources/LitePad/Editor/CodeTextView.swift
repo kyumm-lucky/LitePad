@@ -31,6 +31,10 @@ struct CodeTextView: NSViewRepresentable {
         textView.importsGraphics = false
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        // 不显式放大 maxSize 时，AppKit 会把它定为当前视口尺寸，文本视图到此为止不再长高，
+        // 超出视口的行既画不出也滚不到（大文档滚不到末尾）；必须放到极大值
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
+                                 height: CGFloat.greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
         textView.font = AppSettings.shared.editorFont
@@ -85,6 +89,18 @@ struct CodeTextView: NSViewRepresentable {
         tab.replaceHandler = { [weak coordinator = context.coordinator] replaceAll in
             guard let coordinator, let textView = coordinator.textView else { return }
             performReplace(textView: textView, tab: coordinator.tab, all: replaceAll)
+        }
+        tab.textSourceProvider = { [weak textView, weak tab] in
+            guard let textView else { return (selection: "", fullText: tab?.text ?? "") }
+            let nsText = textView.string as NSString
+            let range = NSIntersectionRange(textView.selectedRange(),
+                                            NSRange(location: 0, length: nsText.length))
+            return (selection: range.length > 0 ? nsText.substring(with: range) : "",
+                    fullText: textView.string)
+        }
+        tab.writeBackHandler = { [weak textView, weak tab] replacement, useSelection in
+            guard let textView else { return }
+            writeBack(replacement, useSelection: useSelection, textView: textView, tab: tab)
         }
 
         textView.string = tab.text
@@ -335,15 +351,38 @@ private func performReplace(textView: NSTextView, tab: EditorTab, all: Bool) {
 }
 
 /// 单区间替换：shouldChangeText 注册撤销 → 存储层替换 → didChangeText 触发模型同步与匹配重算，
-/// 最后定位到重算后的当前匹配
-private func replaceRange(_ range: NSRange, with newText: String, textView: NSTextView, tab: EditorTab) {
+/// 最后定位到重算后的当前匹配；返回是否真正替换（撤销协议拒绝时不改文本）
+@discardableResult
+private func replaceRange(_ range: NSRange, with newText: String, textView: NSTextView,
+                          tab: EditorTab? = nil) -> Bool {
     guard textView.shouldChangeText(in: range, replacementString: newText),
-          let storage = textView.textStorage else { return }
+          let storage = textView.textStorage else { return false }
     storage.replaceCharacters(in: range, with: NSAttributedString(string: newText))
     textView.didChangeText()
-    if let state = tab.findState, state.matches.indices.contains(state.current) {
+    if let tab, let state = tab.findState, state.matches.indices.contains(state.current) {
         tab.findNavigationHandler?(state.current)
     }
+    return true
+}
+
+/// 工具面板结果写回：替换选区（选区为空则插入光标处）或替换全文，
+/// 走 shouldChangeText 撤销协议路径（单次 Cmd+Z 回滚），并选中写入的内容便于确认
+private func writeBack(_ replacement: String, useSelection: Bool, textView: NSTextView, tab: EditorTab?) {
+    // 组字期间视图含未上屏的 marked text，模型与选区已过期，写回会错位；拒绝执行
+    guard !textView.hasMarkedText() else {
+        NSSound.beep()
+        return
+    }
+    let nsText = textView.string as NSString
+    let range = useSelection
+        ? NSIntersectionRange(textView.selectedRange(), NSRange(location: 0, length: nsText.length))
+        : NSRange(location: 0, length: nsText.length)
+    guard nsText.substring(with: range) != replacement else { return }
+    // 未真正替换时不改选区：否则选区可能落到文本末尾之外
+    guard replaceRange(range, with: replacement, textView: textView, tab: tab) else { return }
+    let inserted = NSRange(location: range.location, length: (replacement as NSString).length)
+    textView.selectedRange = inserted
+    textView.scrollRangeToVisible(inserted)
 }
 
 /// 重建查找高亮（layoutManager 临时背景属性，独立于语法高亮的存储属性层）：
