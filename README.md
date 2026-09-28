@@ -14,6 +14,7 @@ macOS 原生轻量文本编辑器骨架：Swift + SwiftUI 外壳 + AppKit `NSTex
   - **ASCII 码**：字符 ⇄ 码值数字串（十进制 / 十六进制，含中文等非 ASCII 字符），解码兼容 `0x` 前缀与逗号 / 分号 / 换行分隔
   - **URL 编码**：UTF-8 百分号编解码，可选空格编码为 `+`
   - **Base64**：编解码，支持 URL 安全变体（`-` `_`、省略 `=`）；解码忽略空白换行，非 UTF-8 结果给出提示
+  - **JSON 格式化**：格式化（2 / 4 空格缩进）与压缩；只重排结构之间的空白，键顺序、数字写法（`1.0`、`1e5`、大整数）与转义原文都原样保留，空对象 / 空数组仍写作 `{}` / `[]`；语法错误按「第 N 行第 M 列」给出中文原因（注释、尾随逗号、单引号字符串等常见写法单独指明）
   - **字符串对比**：A / B 两栏（A 可取编辑器选区、B 可取其他标签页）逐行对比，差异行红绿标记 + 行内字符级高亮，可选忽略大小写与行首尾空白，差异可导出为 `+` / `-` 文本
   - **动效**：切换分段控件时选中胶囊像一滴水先横向拉长再回弹收回（`Views/LiquidSegmented.swift`，自绘并带无障碍语义）；切换工具时面板内容按工具在列表中的前后关系定向推入推出；标签栏扳手在工具打开时拧转并染强调色。所有曲线集中在 `Views/Motion.swift`，并遵循系统「减弱动态效果」设置
 - **打包**：`make app` 一键产出 `.app`（ad-hoc 签名），`make dmg` 产出带拖拽安装链接的 DMG
@@ -46,6 +47,7 @@ LitePad/
 │   │   └── TextTools.swift        # 工具种类与工具面板状态（输入 / 选项 / 结果）
 │   ├── Tools/
 │   │   ├── TextConverters.swift   # Unicode 转义 / ASCII 码 / URL 百分号 / Base64 纯逻辑
+│   │   ├── JSONFormatter.swift    # JSON 格式化 / 压缩：按记号重排，报错带行列
 │   │   └── TextDiff.swift         # 字符串对比：行级差异 + 行内字符级差异
 │   ├── Editor/
 │   │   ├── CodeTextView.swift     # NSTextView 的 NSViewRepresentable 封装
@@ -57,7 +59,7 @@ LitePad/
 │       ├── TabBarView.swift       # 页内标签栏
 │       ├── OptionPanelView.swift  # 窗口内下拉面板（状态栏 / 工具 / 设置页共用样式与点击层）
 │       └── Tools/
-│           └── ToolsPanelView.swift    # 工具抽屉：右缘通栏 + 左缘拖拽调宽，编码转换 + 字符串对比
+│           └── ToolsPanelView.swift    # 工具抽屉：右缘通栏 + 左缘拖拽调宽，编码转换 + JSON + 字符串对比
 ├── Resources/Info.plist           # App 包描述（由打包脚本使用）
 ├── scripts/make-app.sh            # 编译并组装 .app
 └── scripts/make-dmg.sh            # 生成 DMG
@@ -68,6 +70,7 @@ LitePad/
 - **为什么编辑器核心不用 SwiftUI `TextEditor`**：macOS 上它在行号、高亮定制、大文件表现上都不够用；`NSTextView` 免费提供撤销/重做、输入法与文本存储管理，通过 `NSViewRepresentable` 桥接进 SwiftUI。
 - **高亮实现**：v1 为"全文重刷 + 规则优先级跳过"的正则方案（注释 > 字符串 > 数字 > 关键词 > 标签），逻辑简单可靠；代价是大文件逐键性能一般。
 - **标签切换**：以 `tab.id` 重建编辑视图，避免多标签间的文本与选区串扰。
+- **JSON 工具为什么不走 `JSONSerialization`**：解析成对象再序列化会丢掉键顺序，并把 `1.0`、`1e5`、超出双精度的大整数改成别的写法，写回编辑器等于改了原文；改为按记号重排原文后，格式化 / 压缩只动结构之间的空白，键顺序、数字写法与转义原文都原样保留，报错也能精确到行列（`Tools/JSONFormatter.swift`）。
 - **`Cmd+W`**：自定义的"关闭标签页"与系统"关闭窗口"共存在 File 菜单中，如发现快捷键被系统项抢占，可在菜单栏手动确认优先级。
 
 ## Roadmap

@@ -7,6 +7,7 @@ enum TextToolKind: String, CaseIterable, Identifiable {
     case ascii
     case url
     case base64
+    case json
     case diff
 
     var id: String { rawValue }
@@ -17,6 +18,7 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .ascii: return "ASCII 码"
         case .url: return "URL 编码"
         case .base64: return "Base64"
+        case .json: return "JSON 格式化"
         case .diff: return "字符串对比"
         }
     }
@@ -27,8 +29,15 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .ascii: return "number"
         case .url: return "link"
         case .base64: return "arrow.left.arrow.right"
+        case .json: return "curlybraces"
         case .diff: return "rectangle.split.2x1"
         }
+    }
+
+    /// 两档方向的名称，顺序与 ConvertDirection.allCases 一致：
+    /// JSON 工具的两档是「格式化（.encode）/ 压缩（.decode）」，其余是「编码 / 解码」
+    var directionLabels: [String] {
+        self == .json ? ["格式化", "压缩"] : ConvertDirection.allCases.map(\.displayName)
     }
 
     /// 对比工具用 A/B 两栏，其余工具用「输入 → 结果」
@@ -53,6 +62,8 @@ final class TextToolsState: ObservableObject {
     @Published var urlSpaceAsPlus = false
     /// Base64：URL 安全字符
     @Published var base64URLSafe = false
+    /// JSON：格式化时的缩进档位
+    @Published var jsonIndent: JSONIndent = .twoSpaces
 
     /// 工具切换方向：新工具在列表里更靠后时为真，面板据此决定内容换场的推进方向。
     /// 与 kind 在同一次赋值中发出，视图在同一帧里同时看到新工具与方向
@@ -141,6 +152,10 @@ final class TextToolsState: ObservableObject {
             outcome = direction == .encode
                 ? .success(Base64Converter.encode(input, urlSafe: base64URLSafe))
                 : Base64Converter.decode(input)
+        case .json:
+            outcome = direction == .encode
+                ? JSONFormatter.pretty(input, indent: jsonIndent)
+                : JSONFormatter.minify(input)
         case .diff:
             return
         }

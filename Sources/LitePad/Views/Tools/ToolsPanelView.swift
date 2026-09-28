@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 
 /// 工具抽屉：贴窗口右缘的通栏面板（高度与窗口一致），从右向左滑入，左缘可拖拽调宽。
-/// 承载编码转换与字符串对比两类工具，输入默认取编辑器选区（无选区取全文），结果可复制或写回编辑器
+/// 承载编码转换、JSON 格式化与字符串对比三类工具，输入默认取编辑器选区（无选区取全文），
+/// 结果可复制或写回编辑器
 struct ToolsDrawer: View {
     @ObservedObject var tools: TextToolsState
     @ObservedObject var tab: EditorTab
@@ -231,7 +232,7 @@ private struct ConverterSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                LiquidSegmented(labels: ConvertDirection.allCases.map(\.displayName),
+                LiquidSegmented(labels: tools.kind.directionLabels,
                                 selectedIndex: ConvertDirection.allCases.firstIndex(of: tools.direction) ?? 0,
                                 onSelect: { index in
                                     tools.direction = ConvertDirection.allCases[index]
@@ -308,6 +309,17 @@ private struct ConverterSection: View {
                 LitePadToggle(title: "URL 安全",
                               isOn: optionBinding(\.base64URLSafe),
                               help: "用 - _ 替代 + / 并去掉结尾 =；解码时两种写法都能识别")
+                    .transition(.opacity)
+            }
+        case .json:
+            if tools.direction == .encode {
+                LiquidSegmented(labels: JSONIndent.allCases.map(\.displayName),
+                                selectedIndex: JSONIndent.allCases.firstIndex(of: tools.jsonIndent) ?? 0,
+                                onSelect: { index in
+                                    tools.jsonIndent = JSONIndent.allCases[index]
+                                    tools.recompute()
+                                },
+                                segmentWidth: 58)
                     .transition(.opacity)
             }
         case .diff:
