@@ -552,52 +552,6 @@ private struct SettingsRadioList<Option: Hashable & Identifiable>: View {
     }
 }
 
-/// 设置页只读参考列表，使用与下拉面板相同的深色表面和行间距。
-private struct SettingsReferenceList<Option: Hashable & Identifiable>: View {
-    let options: [Option]
-    let selected: Option
-    let label: (Option) -> String
-
-    var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 2) {
-                ForEach(options.indices, id: \.self) { index in
-                    let option = options[index]
-                    HStack {
-                        Text(label(option))
-                        Spacer(minLength: 0)
-                    }
-                    .font(.system(size: 12, weight: selected == option ? .medium : .regular))
-                    .foregroundStyle(selected == option ? Color.primary : InterfaceStyle.muted)
-                    .padding(.horizontal, 9)
-                    .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(selected == option ? InterfaceStyle.accentSoft : Color.clear)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(selected == option
-                                          ? InterfaceStyle.accentBorder
-                                          : Color.clear,
-                                          lineWidth: 1)
-                    )
-                }
-            }
-            .padding(6)
-        }
-        .frame(width: 260, height: 180, alignment: .top)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(InterfaceStyle.panel)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
-        )
-    }
-}
-
 /// 编码优先级列表：保留选择、悬停和标题计数，避免系统 List 的默认外观。
 private struct SettingsSelectionList<Option: Hashable & Identifiable>: View {
     let options: [Option]
@@ -683,12 +637,21 @@ private struct SettingsSelectionList<Option: Hashable & Identifiable>: View {
     }
 }
 
+private enum SettingsMetrics {
+    /// 输入框统一高度：行高、窗口宽高、额外滚动与等宽字体显示框共用，
+    /// 新增输入框时一并取这里，避免各行高度再次走散
+    static let fieldHeight: CGFloat = 28
+    /// 定高输入框里 12pt 文字的基线位置（框顶到基线的距离）；
+    /// 只有图形没有文字的控件（步进器）也用它声明基线，行标题才能与框内文字对齐
+    static let fieldTextBaseline: CGFloat = 18
+}
+
 private extension View {
     func settingsFieldFrame(width: CGFloat) -> some View {
         self
             .font(.system(size: 12))
             .padding(.horizontal, 8)
-            .frame(width: width, height: 28)
+            .frame(width: width, height: SettingsMetrics.fieldHeight)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(InterfaceStyle.field)
@@ -758,10 +721,12 @@ private struct AppearanceSettingsPane: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Text("\(settings.editorFontDisplayName)  \(Int(settings.editorFontSize))")
-                            .font(.system(size: 13))
+                            .font(.system(size: 12))
+                            .lineLimit(1)
                             .frame(maxWidth: 180)
-                            .padding(.vertical, 3)
                             .padding(.horizontal, 10)
+                            // 与「行高」等输入框同高；长字体名只截断，不再把这一行撑高
+                            .frame(height: SettingsMetrics.fieldHeight)
                             .background(
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                                     .fill(InterfaceStyle.field)
@@ -772,7 +737,8 @@ private struct AppearanceSettingsPane: View {
                             )
                         FontSizeStepper()
                         Button("选择…") { chooseFont() }
-                            .buttonStyle(PanelActionButtonStyle(tone: .neutral))
+                            .buttonStyle(PanelActionButtonStyle(tone: .neutral,
+                                                                minHeight: SettingsMetrics.fieldHeight))
                     }
                     LitePadToggle(title: "连字", isOn: $settings.ligaturesEnabled)
                 }
@@ -832,14 +798,12 @@ private final class FontPanelTarget: NSObject {
     }
 }
 
-/// 字号微调按钮（上下箭头）
+/// 字号微调按钮（上下箭头）：与「行高」等输入框同高，取 SettingsStepper 的默认尺寸
 private struct FontSizeStepper: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        SettingsStepper(width: 20,
-                        height: 24,
-                        onIncrement: { settings.editorFontSize = min(96, settings.editorFontSize + 1) },
+        SettingsStepper(onIncrement: { settings.editorFontSize = min(96, settings.editorFontSize + 1) },
                         onDecrement: { settings.editorFontSize = max(6, settings.editorFontSize - 1) })
     }
 }
@@ -856,6 +820,9 @@ private struct SettingsStepper: View {
             stepperButton("chevron.down", action: onDecrement)
         }
         .frame(width: width, height: height)
+        // 两个按钮都只有图标没有文字，SwiftUI 合成出的基线偏高，会把同一行左侧的标题
+        // 拉到输入框上沿；这里按输入框内文字的基线声明，标题才与框内文字齐平
+        .alignmentGuide(.firstTextBaseline) { _ in SettingsMetrics.fieldTextBaseline }
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(InterfaceStyle.raised)
@@ -1068,11 +1035,6 @@ private struct FormatSettingsPane: View {
                                label: \.displayName,
                                width: 260,
                                popups: popups)
-            }
-            SettingsRow("可用的语法：") {
-                SettingsReferenceList(options: LanguageDefinition.all,
-                                      selected: settings.defaultLanguage,
-                                      label: \.displayName)
             }
         }
         .padding(.vertical, 2)

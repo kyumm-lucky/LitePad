@@ -163,6 +163,8 @@ enum PanelButtonTone: Equatable {
 /// 工具面板中的紧凑操作按钮，保证浅色背景下仍有稳定边界和按下反馈。
 struct PanelActionButtonStyle: ButtonStyle {
     let tone: PanelButtonTone
+    /// 最小高度：紧邻设置页 28pt 输入框的按钮传入同高值，默认 0 保持工具面板的紧凑尺寸
+    var minHeight: CGFloat = 0
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -170,6 +172,7 @@ struct PanelActionButtonStyle: ButtonStyle {
             .foregroundStyle(tone == .accent ? Color.white : Color.primary)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
+            .frame(minHeight: minHeight)
             .background(background(isPressed: configuration.isPressed),
                         in: RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(
