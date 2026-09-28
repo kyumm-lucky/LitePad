@@ -44,14 +44,12 @@ private final class SettingsNavigationState: ObservableObject {
 /// 主窗口左侧设置抽屉：分组导航固定在左侧，具体选项在右侧滚动查看。
 struct SettingsView: View {
     static let drawerWidth: CGFloat = 660
-    static let coordinateSpace = "settingsView"
     /// 详情区坐标空间：下拉锚点与弹层同用一处，弹层才能按锚点摆对位置
     static let detailCoordinateSpace = "settingsDetail"
 
     let onClose: () -> Void
     @ObservedObject private var settings = AppSettings.shared
     @StateObject private var navigation = SettingsNavigationState()
-    @StateObject private var cursorHint = SettingsCursorHintState()
     @StateObject private var popups = SettingsPopupState(space: SettingsView.detailCoordinateSpace)
 
     init(onClose: @escaping () -> Void = {}) {
@@ -74,11 +72,6 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(InterfaceStyle.frostedEdge, lineWidth: 1)
         )
-        .overlay(ArrowCursorOverlay(skipRects: cursorHint.editableFrames))
-        .coordinateSpace(name: Self.coordinateSpace)
-        .onPreferenceChange(SettingsEditableFramesKey.self) { frames in
-            cursorHint.editableFrames = frames
-        }
         .onChange(of: settings.appearanceMode) { _ in settings.applyAppearance() }
         // 换页时原页面连同按钮一起消失，弹层留在宿主顶层不会自己收，这里显式收掉
         .onChange(of: navigation.section) { _ in popups.dismiss() }
@@ -507,18 +500,6 @@ private struct SettingsPicker<Option: Hashable & Identifiable>: View {
     }
 }
 
-private final class SettingsCursorHintState: ObservableObject {
-    @Published var editableFrames: [CGRect] = []
-}
-
-private struct SettingsEditableFramesKey: PreferenceKey {
-    static var defaultValue: [CGRect] = []
-
-    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
-        value.append(contentsOf: nextValue())
-    }
-}
-
 /// 多选项单选列表，替代系统 radioGroup，保持设置页与下拉列表一致。
 private struct SettingsRadioList<Option: Hashable & Identifiable>: View {
     let options: [Option]
@@ -717,17 +698,6 @@ private extension View {
                     .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
             )
     }
-
-    func trackSettingsEditableFrame() -> some View {
-        background(
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: SettingsEditableFramesKey.self,
-                    value: [proxy.frame(in: .named(SettingsView.coordinateSpace))]
-                )
-            }
-        )
-    }
 }
 
 // MARK: - 通用
@@ -814,7 +784,6 @@ private struct AppearanceSettingsPane: View {
                         .textFieldStyle(.plain)
                         .settingsFieldFrame(width: 64)
                         .multilineTextAlignment(.trailing)
-                        .trackSettingsEditableFrame()
                     SettingsStepper(onIncrement: { bumpLineHeight(0.1) },
                                     onDecrement: { bumpLineHeight(-0.1) })
                     Text("倍")
@@ -824,7 +793,7 @@ private struct AppearanceSettingsPane: View {
                 RadioRow(options: AppearanceMode.allCases, selection: $settings.appearanceMode,
                          label: \.displayName)
             }
-            SettingsRow("状态栏：") {
+            SettingsRow("顶栏与状态栏：") {
                 RadioRow(options: StatusBarBackgroundStyle.allCases, selection: $settings.statusBarStyle,
                          label: \.displayName)
             }
@@ -952,7 +921,6 @@ private struct WindowSettingsPane: View {
                             .textFieldStyle(.plain)
                             .settingsFieldFrame(width: 60)
                             .multilineTextAlignment(.trailing)
-                            .trackSettingsEditableFrame()
                             .disabled(!settings.pageGuideEnabled)
                     }
                     .padding(.leading, 18)
@@ -973,7 +941,6 @@ private struct WindowSettingsPane: View {
                             .textFieldStyle(.plain)
                             .settingsFieldFrame(width: 52)
                             .multilineTextAlignment(.trailing)
-                            .trackSettingsEditableFrame()
                             .disabled(!settings.wrapLines || !settings.wrapIndentEnabled)
                         Text("个空格").font(.caption).foregroundStyle(.secondary)
                     }
@@ -991,7 +958,6 @@ private struct WindowSettingsPane: View {
                         .textFieldStyle(.plain)
                         .settingsFieldFrame(width: 70)
                         .multilineTextAlignment(.trailing)
-                        .trackSettingsEditableFrame()
                     SettingsStepper(onIncrement: { bumpExtraScroll(5) },
                                     onDecrement: { bumpExtraScroll(-5) })
                     Text("%").font(.caption).foregroundStyle(.secondary)
@@ -1025,7 +991,6 @@ private struct WindowSettingsPane: View {
                 .textFieldStyle(.plain)
                 .settingsFieldFrame(width: 80)
                 .multilineTextAlignment(.center)
-                .trackSettingsEditableFrame()
             Text(caption)
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -52,10 +52,10 @@ struct ContentView: View {
             }
 
             if let kind = session.expandedMenu, let tab = session.selectedTab, kind != .tools {
-                // 原生容器声明箭头光标，内部承载面板内容；抽屉打开时左移，仍贴着状态栏按钮。
-                // 出场动画在 OptionPanel 内部完成：容器由 NSHostingView 承载，
-                // 位移或透明度过渡加在这一层既不渲染，还会让宿主每帧重新布局
-                PanelCursorContainer(content: menuPanel(for: kind, tab: tab))
+                // 面板贴状态栏右上角；抽屉打开时左移，仍贴着状态栏按钮。
+                // 出场动画在 OptionPanel 内部完成：位移或透明度过渡加在宿主外层既不渲染，
+                // 还会让宿主每帧重新布局
+                menuPanel(for: kind, tab: tab)
                     .fixedSize()
                     .padding(.trailing, 8 + drawerWidth)
                     .padding(.bottom, 30)
@@ -63,7 +63,7 @@ struct ContentView: View {
 
             if session.expandedMenu == .tools, let tab = session.selectedTab {
                 // 工具下拉：贴窗口右缘、挂在标签栏（34pt）下方；抽屉打开时让到抽屉左侧的扳手处
-                PanelCursorContainer(content: menuPanel(for: .tools, tab: tab))
+                menuPanel(for: .tools, tab: tab)
                     .fixedSize()
                     .padding(.trailing, 6 + drawerWidth)
                     .padding(.top, 36)
@@ -91,6 +91,11 @@ struct ContentView: View {
         // 以及抽屉开合时下拉面板的让位位移，三者共用同一条曲线
         .animation(Motion.drawer, value: session.activeTool)
         .animation(Motion.drawer, value: session.isSettingsPresented)
+        // 面板 / 抽屉开关会改变指针下的区域，但指针不动时不会产生鼠标事件，
+        // 这里主动重算一次光标（见 CursorArbiter.swift）
+        .onChange(of: session.activeTool) { _ in CursorArbiter.shared.refresh() }
+        .onChange(of: session.isSettingsPresented) { _ in CursorArbiter.shared.refresh() }
+        .onChange(of: session.expandedMenu) { _ in CursorArbiter.shared.refresh() }
     }
 
     /// 主栏：标签栏 + 编辑区 + 状态栏，右侧给工具抽屉腾出宽度
@@ -195,17 +200,7 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(statusBarBackground)
-        }
-    }
-
-    /// 状态栏背景：色调 = 半透明材质，不透明 = 窗口底色
-    @ViewBuilder
-    private var statusBarBackground: some View {
-        if settings.statusBarStyle == .tinted {
-            FrostedSurface(shape: Rectangle())
-        } else {
-            InterfaceStyle.window
+                .background(BarBackground(style: settings.statusBarStyle))
         }
     }
 }
@@ -291,13 +286,7 @@ private struct StatusBarView: View {
         .foregroundStyle(InterfaceStyle.muted)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .background {
-            if settings.statusBarStyle == .tinted {
-                FrostedSurface(shape: Rectangle())
-            } else {
-                InterfaceStyle.window
-            }
-        }
+        .background(BarBackground(style: settings.statusBarStyle))
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(InterfaceStyle.borderStrong)

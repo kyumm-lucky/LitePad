@@ -3,6 +3,8 @@ import SwiftUI
 /// Notepad++ 式页内标签栏：标签可点击切换、单个关闭，"+" 按钮新建，右端齿轮打开设置
 struct TabBarView: View {
     @EnvironmentObject private var session: EditorSession
+    /// 顶栏背景与状态栏共用同一设置（见 BarBackground）
+    @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
         HStack(spacing: 0) {
@@ -46,7 +48,7 @@ struct TabBarView: View {
                 .padding(.trailing, 6)
         }
         .frame(height: 34)
-        .background(FrostedSurface(shape: Rectangle()))
+        .background(BarBackground(style: settings.statusBarStyle))
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(InterfaceStyle.borderStrong)

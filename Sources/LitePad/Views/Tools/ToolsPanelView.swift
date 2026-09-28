@@ -13,8 +13,6 @@ struct ToolsDrawer: View {
     /// 松手落盘
     let onResizeCommit: () -> Void
     @EnvironmentObject private var session: EditorSession
-    /// 可编辑文本区的位置（本工程无可用的 @State 宏，测量结果用轻量对象承载）
-    @StateObject private var cursorHint = CursorHintState()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -64,12 +62,6 @@ struct ToolsDrawer: View {
         // 换场位移只发生在面板内部：不裁剪的话内容会滑到编辑区上
         .clipped()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // 面板空白、标签、按钮等区域强制箭头光标，只有可编辑文本区保持 I-beam
-        .overlay(ArrowCursorOverlay(skipRects: cursorHint.editableFrames))
-        .coordinateSpace(name: Self.coordinateSpace)
-        .onPreferenceChange(EditableFramesKey.self) { frames in
-            cursorHint.editableFrames = frames
-        }
     }
 
     /// 面板标题行：当前工具名（切换工具走标签栏的扳手下拉）+ 取编辑器文本 + 关闭
@@ -112,8 +104,6 @@ struct ToolsDrawer: View {
         }
     }
 
-    /// 面板坐标空间名：可编辑区测量与光标命中判断共用
-    static let coordinateSpace = "toolsPanel"
 }
 
 /// 抽屉左缘的调宽把手：原生视图，负责 resizeLeftRight 光标与拖拽换算。
@@ -134,7 +124,7 @@ private struct DrawerResizeHandle: NSViewRepresentable {
     }
 }
 
-private final class DrawerResizeNSView: NSView {
+private final class DrawerResizeNSView: NSView, CursorDeclaring {
     private var currentWidth: (() -> CGFloat)?
     private var onDrag: ((CGFloat) -> Void)?
     private var onCommit: (() -> Void)?
@@ -190,9 +180,7 @@ private final class DrawerResizeNSView: NSView {
                                        userInfo: nil))
     }
 
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .resizeLeftRight)
-    }
+    var preferredCursor: NSCursor { .resizeLeftRight }
 
     override func mouseEntered(with event: NSEvent) {
         setHoverBar(visible: true)
@@ -232,19 +220,6 @@ private final class DrawerResizeNSView: NSView {
         setHoverBar(visible: bounds.contains(convert(event.locationInWindow, from: nil)))
         onCommit?()
     }
-}
-
-/// 面板坐标空间下的可编辑文本区矩形集合
-private struct EditableFramesKey: PreferenceKey {
-    static var defaultValue: [CGRect] = []
-    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
-        value.append(contentsOf: nextValue())
-    }
-}
-
-/// 光标提示的瞬时状态：记录需要保留 I-beam 的可编辑文本区
-private final class CursorHintState: ObservableObject {
-    @Published var editableFrames: [CGRect] = []
 }
 
 /// 编码转换：输入 → 结果，方向与工具专属选项控制转换口径，结果可复制 / 替换编辑器
@@ -593,11 +568,6 @@ private struct CodeTextEditor: View {
             .padding(.vertical, 2)
             .frame(minHeight: 64, maxHeight: .infinity)
             .background(PanelStyle.fieldBackground)
-            .background(GeometryReader { proxy in
-                Color.clear.preference(
-                    key: EditableFramesKey.self,
-                    value: [proxy.frame(in: .named(ToolsDrawer.coordinateSpace))])
-            })
             .overlay(alignment: .topLeading) {
                 if text.isEmpty && !isFocused {
                     Text(placeholder)

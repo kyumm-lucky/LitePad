@@ -11,6 +11,8 @@ struct LitePadApp: App {
         // 按设置应用浅色 / 深色外观
         AppSettings.shared.applyAppearance()
         NSApplication.shared.activate(ignoringOtherApps: true)
+        // 非编辑区统一箭头光标（见 CursorArbiter.swift）
+        CursorArbiter.shared.install()
     }
 
     var body: some Scene {

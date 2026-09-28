@@ -80,6 +80,20 @@ struct FrostedSurface<ShapeType: InsettableShape>: View {
     }
 }
 
+/// 顶栏（标签栏）与状态栏共用的背景：色调 = 磨砂材质，不透明 = 窗口底色。
+/// 两条栏必须同一口径——一条材质、一条纯色时，浅色下一条偏冷灰、一条偏白，看着像两种窗口
+struct BarBackground: View {
+    let style: StatusBarBackgroundStyle
+
+    var body: some View {
+        if style == .tinted {
+            FrostedSurface(shape: Rectangle())
+        } else {
+            InterfaceStyle.window
+        }
+    }
+}
+
 /// 供多个页面控件共用的悬停状态。使用对象承载瞬时状态，兼容当前 Command Line Tools 工具链。
 final class InterfaceHoverState: ObservableObject {
     @Published var isHovered = false

@@ -50,7 +50,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// 状态栏背景风格
+/// 顶栏（标签栏）与状态栏的背景口径，两条栏共用：色调 = 磨砂材质，不透明 = 窗口底色
 enum StatusBarBackgroundStyle: String, CaseIterable, Identifiable {
     case tinted
     case opaque

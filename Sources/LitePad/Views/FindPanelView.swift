@@ -29,6 +29,8 @@ struct FindPanelView: View {
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
                     .frame(width: 150)
+                    // 与查找框同口径：回车继续跳到下一个匹配，不用先点回查找框
+                    .onSubmit { tab.navigateMatch(1) }
                 panelButton("arrow.uturn.backward", "替换当前匹配") { tab.replaceHandler?(false) }
                 panelButton("arrow.2.squarepath", "全部替换") { tab.replaceHandler?(true) }
             }
@@ -42,8 +44,15 @@ struct FindPanelView: View {
         .frame(width: 380, alignment: .leading)
         .background(FrostedSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous)))
         .shadow(color: .black.opacity(0.2), radius: 14, y: 5)
+        // 整块参与命中测试：行距、内边距等空白处不再漏到下方编辑器（点击与光标都留在面板上）
+        .contentShape(Rectangle())
         .onExitCommand { tab.findState = nil }
-        .onAppear { queryFocused = true }
+        .onAppear {
+            // 面板带滑入过渡，出现当帧就设焦点会被过渡吞掉：SwiftUI 侧焦点状态已置真、
+            // AppKit 侧第一响应者却还在编辑器上，于是输入与回车都落进编辑器（回车不换搜索结果）。
+            // 推迟一帧再设，等第一响应者真正切到输入框
+            DispatchQueue.main.async { queryFocused = true }
+        }
     }
 
     private var countText: String {
@@ -56,6 +65,9 @@ struct FindPanelView: View {
     private var queryBinding: Binding<String> {
         Binding(get: { tab.findState?.query ?? "" },
                 set: { newValue in
+                    // 回车提交时 SwiftUI 会把同一段文字原样回写一次；若照此重置 current，
+                    // 每次回车都会跳回第一个匹配，"下一个"就永远停在 2/N
+                    guard newValue != tab.findState?.query else { return }
                     tab.updateFind {
                         $0.query = newValue
                         $0.current = 0
@@ -66,6 +78,8 @@ struct FindPanelView: View {
     private var replacementBinding: Binding<String> {
         Binding(get: { tab.findState?.replacement ?? "" },
                 set: { newValue in
+                    // 同上：无变化的回写不再触发整篇重算匹配
+                    guard newValue != tab.findState?.replacement else { return }
                     tab.updateFind { $0.replacement = newValue }
                 })
     }
