@@ -17,10 +17,11 @@ struct LitePadApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("LitePad") {
+        WindowGroup("LitePad", id: mainWindowID) {
             ContentView()
                 .environmentObject(session)
                 .frame(minWidth: 760, minHeight: 480)
+                .background(ReopenWindowBridge { appDelegate.reopenWindow = $0 })
                 // 退出保护需要会话：委托对象由 SwiftUI 在 App 构造期创建，早于 @StateObject
                 // 的会话，所以在这里补上引用（首帧之前没有脏标签，晚接不影响保护）
                 .onAppear { appDelegate.session = session }
@@ -63,16 +64,50 @@ struct LitePadApp: App {
     }
 }
 
-/// 应用级委托：目前只负责退出前的未保存保护。`Cmd+Q`、菜单「退出」、Dock 菜单退出、
-/// 注销 / 关机都会经由 applicationShouldTerminate，在这里统一交给会话逐个确认脏标签
+/// 应用级委托：负责退出前的未保存保护，以及窗口全关后再点 Dock 图标时把窗口建回来。
+/// `Cmd+Q`、菜单「退出」、Dock 菜单退出、注销 / 关机都会经由 applicationShouldTerminate，
+/// 在那里统一交给会话逐个确认脏标签
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 由 LitePadApp 在根视图出现时注入（见那里的说明）
     weak var session: EditorSession?
+    /// 由根视图注入的 openWindow 动作，用于重建窗口（见 applicationShouldHandleReopen）
+    var reopenWindow: (() -> Void)?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // 会话尚未注入时是启动早期，此时不可能有未保存内容
         guard let session else { return .terminateNow }
         return session.confirmTermination() ? .terminateNow : .terminateCancel
+    }
+
+    /// 窗口全关掉后点 Dock 图标（或 Dock 的「重新打开」）会走到这里。实测本工程的窗口关闭后
+    /// 即被释放，SwiftUI 不会自己把 WindowGroup 的窗口建回来（同样结构的最小 App 会），
+    /// 所以必须显式重建——否则图标点下去毫无反应，未保存的内容也就再也回不到屏幕上。
+    /// 窗口还在（`Cmd+H` 隐藏、最小化）时 AppKit 自己会把它恢复到前台，这里不插手。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag, let reopenWindow else { return true }
+        if let window = sender.windows.first(where: { $0.canBecomeMain || $0.isMiniaturized }) {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            reopenWindow()
+        }
+        return true
+    }
+}
+
+/// 主窗口的 WindowGroup 标识（重建窗口时按它取）
+private let mainWindowID = "main"
+
+/// 取当前窗口的 openWindow 动作交给应用委托：环境值只能在视图里读，读到的动作转交出去，
+/// 供窗口全关后重建窗口。同 WindowSizeSync 的写法，零尺寸视图只为挂 onAppear
+private struct ReopenWindowBridge: View {
+    @Environment(\.openWindow) private var openWindow
+    let install: (@escaping () -> Void) -> Void
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear { install { openWindow(id: mainWindowID) } }
     }
 }
