@@ -4,6 +4,9 @@ import AppKit
 @main
 struct LitePadApp: App {
     @StateObject private var session = EditorSession()
+    /// 「显示」菜单的勾选态与字号命令直读设置对象：应用层观察它，
+    /// 设置页里的改动才会回流到菜单（否则勾选态停在首次构建时的取值）
+    @ObservedObject private var settings = AppSettings.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
@@ -82,6 +85,24 @@ struct LitePadApp: App {
                             .disabled(!session.isLineOperationAvailable(kind))
                     }
                 }
+            }
+            // 字号与显示开关（R18 / R19）：并入框架自带的「显示」菜单（现只含「进入全屏幕」），
+            // 锚点取 .toolbar——它落在系统「显示」菜单里，不另建同名菜单（同名会出现两个「显示」）。
+            // 五项开关直读设置属性本身，勾选态即设置值，两端不各存一份；
+            // 「不可见元素」只切总开关，五个子项仍由设置页控制
+            CommandGroup(after: .toolbar) {
+                Button("增大字号") { settings.stepEditorFontSize(by: 1) }
+                    .keyboardShortcut("=", modifiers: .command)
+                Button("减小字号") { settings.stepEditorFontSize(by: -1) }
+                    .keyboardShortcut("-", modifiers: .command)
+                Button("复位字号") { settings.resetEditorFontSize() }
+                    .keyboardShortcut("0", modifiers: .command)
+                Divider()
+                Toggle("软换行", isOn: $settings.wrapLines)
+                Toggle("行号", isOn: $settings.showLineNumbers)
+                Toggle("不可见元素", isOn: $settings.showInvisibles)
+                Toggle("缩进指示", isOn: $settings.showIndentGuides)
+                Toggle("当前行高亮", isOn: $settings.highlightCurrentLine)
             }
             // 菜单栏「工具」：与标题栏「工具」下拉同一入口，供键盘 / 触控板访问
             CommandMenu("工具") {

@@ -907,13 +907,14 @@ private final class FontPanelTarget: NSObject {
     }
 }
 
-/// 字号微调按钮（上下箭头）：与「行高」等输入框同高，取 SettingsStepper 的默认尺寸
+/// 字号微调按钮（上下箭头）：与「行高」等输入框同高，取 SettingsStepper 的默认尺寸。
+/// 步进与可调区间的收敛在设置对象里统一做，与「显示」菜单的缩放快捷键同一份口径
 private struct FontSizeStepper: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        SettingsStepper(onIncrement: { settings.editorFontSize = min(96, settings.editorFontSize + 1) },
-                        onDecrement: { settings.editorFontSize = max(6, settings.editorFontSize - 1) })
+        SettingsStepper(onIncrement: { settings.stepEditorFontSize(by: 1) },
+                        onDecrement: { settings.stepEditorFontSize(by: -1) })
     }
 }
 

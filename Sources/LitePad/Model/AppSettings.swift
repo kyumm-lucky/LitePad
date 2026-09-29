@@ -148,11 +148,16 @@ final class AppSettings: ObservableObject {
 
     // MARK: - 外观
 
-    /// 编辑器字体；未命中已存字体名时回退到系统等宽字体
+    /// 字号的可调区间与默认值：设置页的字号微调与「显示」菜单的缩放 / 复位共用这一份口径
+    static let editorFontSizeRange: ClosedRange<Double> = 6...96
+    static let defaultEditorFontSize: Double = 13
+
+    /// 编辑器字体；未命中已存字体名时回退到系统等宽字体——回退也按当前字号取，
+    /// 默认字体（字体名为空）下改字号才真的落到编辑区
     var editorFont: NSFont {
         get {
             NSFont(name: editorFontName, size: CGFloat(editorFontSize))
-                ?? .monospacedSystemFont(ofSize: 13, weight: .regular)
+                ?? .monospacedSystemFont(ofSize: CGFloat(editorFontSize), weight: .regular)
         }
         set {
             editorFontName = newValue.fontName
@@ -165,6 +170,18 @@ final class AppSettings: ObservableObject {
     @Published var editorFontSize: Double {
         didSet { defaults.set(editorFontSize, forKey: "settings.fontSize") }
     }
+
+    /// 按步进调整字号并收敛到可调区间：设置页微调按钮与「显示」菜单的缩放快捷键共用
+    func stepEditorFontSize(by delta: Double) {
+        editorFontSize = min(Self.editorFontSizeRange.upperBound,
+                             max(Self.editorFontSizeRange.lowerBound, editorFontSize + delta))
+    }
+
+    /// 复位到字号设置项的默认值：快捷键缩放改的是全局字号，不是会话级的临时缩放
+    func resetEditorFontSize() {
+        editorFontSize = Self.defaultEditorFontSize
+    }
+
     /// 字体选择框的展示名；系统内置等宽字体的内部名不适合展示
     var editorFontDisplayName: String {
         editorFont.fontName.hasPrefix(".") ? "系统等宽" : (editorFont.displayName ?? editorFontName)
@@ -377,7 +394,7 @@ final class AppSettings: ObservableObject {
             .flatMap(ExternalChangeAction.init(rawValue:)) ?? .update
 
         editorFontName = defaults.string(forKey: "settings.fontName") ?? ""
-        editorFontSize = defaults.object(forKey: "settings.fontSize") as? Double ?? 13
+        editorFontSize = defaults.object(forKey: "settings.fontSize") as? Double ?? Self.defaultEditorFontSize
         ligaturesEnabled = defaults.object(forKey: "settings.ligatures") as? Bool ?? false
         lineHeightMultiple = defaults.object(forKey: "settings.lineHeight") as? Double ?? 1.0
         appearanceMode = defaults.string(forKey: "settings.appearance")
