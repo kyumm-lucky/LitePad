@@ -17,17 +17,21 @@ struct FindState: Equatable {
 
 /// 查找选项 → 匹配计算；literal / 正则 / 全词 / 忽略大小写统一入口
 enum FindEngine {
-    /// 正则模式下的实际 pattern；全词在两侧加词边界
-    private static func patternFor(_ state: FindState) -> String {
-        state.wholeWord ? "\\b(?:" + state.query + ")\\b" : state.query
+    /// 正则模式下的实际 pattern：查询串先做换行适配（`\n` 兼容 LF / CRLF / CR），全词在两侧加词边界
+    private static func regexPattern(_ state: FindState) -> String {
+        let body = FindSyntax.regexQuery(state.query)
+        return state.wholeWord ? "\\b(?:" + body + ")\\b" : body
     }
 
-    /// 按选项编译正则（含忽略大小写选项）；FindEngine 内唯一编译点，
-    /// 保证查找、校验、替换三处的正则语义一致
+    /// 正则模式编译入口；FindEngine 内唯一编译点，保证查找、校验、替换三处的正则语义一致
     private static func compiledRegex(for state: FindState) -> NSRegularExpression? {
+        compiled(pattern: regexPattern(state), caseSensitive: state.caseSensitive)
+    }
+
+    private static func compiled(pattern: String, caseSensitive: Bool) -> NSRegularExpression? {
         var options = NSRegularExpression.Options()
-        if !state.caseSensitive { options.insert(.caseInsensitive) }
-        return try? NSRegularExpression(pattern: patternFor(state), options: options)
+        if !caseSensitive { options.insert(.caseInsensitive) }
+        return try? NSRegularExpression(pattern: pattern, options: options)
     }
 
     /// 正则是否可编译（literal 恒合法）
@@ -48,6 +52,15 @@ enum FindEngine {
             return regex.matches(in: text, options: [], range: full).map(\.range).filter { $0.length > 0 }
         }
 
+        // 含 `\n` 等转义的查询串走正则路径：\n 要能命中 LF / CRLF / CR 三种换行（见 FindSyntax）
+        if FindSyntax.hasEscapes(state.query) {
+            guard let regex = compiled(pattern: FindSyntax.literalPattern(state.query),
+                                       caseSensitive: state.caseSensitive) else { return [] }
+            let ranges = regex.matches(in: text, options: [], range: full).map(\.range).filter { $0.length > 0 }
+            // 全词判定仍走 CJK 逐字视为边界的 isWholeWord，与 \b 的 ICU 语义不混用
+            return state.wholeWord ? ranges.filter { isWholeWord($0, in: nsText) } : ranges
+        }
+
         var options: String.CompareOptions = []
         if !state.caseSensitive { options.insert(.caseInsensitive) }
         var ranges: [NSRange] = []
@@ -64,8 +77,10 @@ enum FindEngine {
         return ranges
     }
 
-    /// 全部替换后的新文本；非法正则返回 nil
-    static func replacingAll(_ state: FindState, in text: String) -> String? {
+    /// 全部替换后的新文本；非法正则返回 nil。
+    /// `lineBreak` 是替换里插入的换行（取标签页的 lineEnding：与状态栏显示、保存写入的换行一致，
+    /// 不能从文本现推——文本若刚好没有换行会误判成 LF）
+    static func replacingAll(_ state: FindState, in text: String, lineBreak: String) -> String? {
         guard !state.regexError, isValid(state) else { return nil }
         // 两条路径都消费 state.matches（与面板计数同一份已过滤列表，零长匹配已剔除），
         // 保证"替换范围 = 显示计数"，杜绝计数 0/0 却仍替换的口径分裂
@@ -75,16 +90,19 @@ enum FindEngine {
 
         if state.useRegex {
             guard let regex = compiledRegex(for: state) else { return nil }
+            // ICU 模板不认 \n 等转义，先展开成真实字符（含文档换行符）再交给 ICU 处理 $1 之类的回引
+            let template = FindSyntax.regexTemplate(state.replacement, lineBreak: lineBreak)
             for range in state.matches {
                 guard let match = regex.firstMatch(in: text, options: [], range: range) else { return nil }
                 result += nsText.substring(with: NSRange(location: cursor, length: range.location - cursor))
-                result += regex.replacementString(for: match, in: text, offset: 0, template: state.replacement)
+                result += regex.replacementString(for: match, in: text, offset: 0, template: template)
                 cursor = range.location + range.length
             }
         } else {
+            let replacement = FindSyntax.literalReplacement(state.replacement, lineBreak: lineBreak)
             for range in state.matches {
                 result += nsText.substring(with: NSRange(location: cursor, length: range.location - cursor))
-                result += state.replacement
+                result += replacement
                 cursor = range.location + range.length
             }
         }
@@ -92,14 +110,17 @@ enum FindEngine {
         return result
     }
 
-    /// 单个匹配的替换文本（正则模式支持 $1 捕获组回引）
-    static func replacementString(_ state: FindState, matchRange: NSRange, in text: String) -> String {
+    /// 单个匹配的替换文本（正则模式支持 $1 捕获组回引、`\n` 等转义插入文档换行符）
+    static func replacementString(_ state: FindState, matchRange: NSRange, in text: String,
+                                 lineBreak: String) -> String {
         guard state.useRegex,
               let regex = compiledRegex(for: state),
               let match = regex.firstMatch(in: text, options: [], range: matchRange) else {
-            return state.replacement
+            return FindSyntax.literalReplacement(state.replacement, lineBreak: lineBreak)
         }
-        return regex.replacementString(for: match, in: text, offset: 0, template: state.replacement)
+        return regex.replacementString(for: match, in: text, offset: 0,
+                                       template: FindSyntax.regexTemplate(state.replacement,
+                                                                          lineBreak: lineBreak))
     }
 
     /// 全词判定：匹配两侧不能是词字符；CJK 逐字视为边界（与正则 \b 的 ICU 语义不混用）

@@ -331,9 +331,12 @@ private func performReplace(textView: NSTextView, tab: EditorTab, all: Bool) {
         return
     }
     let text = textView.string
+    // 替换里 `\n` 插入的换行取标签页的行尾：与状态栏显示、保存写盘的口径一致
+    let lineBreak = tab.lineEnding.separator
 
     if all {
-        guard let newText = FindEngine.replacingAll(state, in: text), newText != text else { return }
+        guard let newText = FindEngine.replacingAll(state, in: text, lineBreak: lineBreak),
+              newText != text else { return }
         replaceRange(NSRange(location: 0, length: (text as NSString).length),
                      with: newText, textView: textView, tab: tab)
         return
@@ -341,7 +344,7 @@ private func performReplace(textView: NSTextView, tab: EditorTab, all: Bool) {
 
     guard state.matches.indices.contains(state.current) else { return }
     let range = state.matches[state.current]
-    let newText = FindEngine.replacementString(state, matchRange: range, in: text)
+    let newText = FindEngine.replacementString(state, matchRange: range, in: text, lineBreak: lineBreak)
     guard newText != (text as NSString).substring(with: range) else {
         // 替换结果与原文相同（如空模板）：仍推进到下一个匹配
         tab.navigateMatch(1)

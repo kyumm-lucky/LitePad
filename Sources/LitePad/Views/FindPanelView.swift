@@ -9,6 +9,8 @@ struct FindPanelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
+                // 转义说明放在下方提示行（那儿有完整 tooltip）；输入框本身不加 help——
+                // AppKit 会把 help 当可访问性标签，顶掉输入框自己的「查找」名字
                 TextField("查找", text: queryBinding)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
@@ -38,6 +40,12 @@ struct FindPanelView: View {
                 LitePadToggle(title: "正则", isOn: optionBinding(\.useRegex))
                 LitePadToggle(title: "大小写", isOn: optionBinding(\.caseSensitive))
                 LitePadToggle(title: "全词", isOn: optionBinding(\.wholeWord))
+                Spacer(minLength: 0)
+                // 单行输入框输不进真实换行，转义是这里唯一的表达方式，直接写在面板上而不是只藏在悬停提示里
+                Text("\\n 换行 · \\t 制表符")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .help(escapesHelp)
             }
         }
         .padding(8)
@@ -64,7 +72,8 @@ struct FindPanelView: View {
 
     private var queryBinding: Binding<String> {
         Binding(get: { tab.findState?.query ?? "" },
-                set: { newValue in
+                set: { rawValue in
+                    let newValue = FindSyntax.escapingRealNewlines(rawValue)
                     // 回车提交时 SwiftUI 会把同一段文字原样回写一次；若照此重置 current，
                     // 每次回车都会跳回第一个匹配，"下一个"就永远停在 2/N
                     guard newValue != tab.findState?.query else { return }
@@ -77,11 +86,17 @@ struct FindPanelView: View {
 
     private var replacementBinding: Binding<String> {
         Binding(get: { tab.findState?.replacement ?? "" },
-                set: { newValue in
+                set: { rawValue in
+                    let newValue = FindSyntax.escapingRealNewlines(rawValue)
                     // 同上：无变化的回写不再触发整篇重算匹配
                     guard newValue != tab.findState?.replacement else { return }
                     tab.updateFind { $0.replacement = newValue }
                 })
+    }
+
+    /// 两个输入框共用的转义说明：面板是单行输入框，换行只能这样输
+    private var escapesHelp: String {
+        "转义：\\n 换行（LF / CRLF 文档都匹配）· \\r 回车 · \\t 制表符 · \\\\ 反斜杠"
     }
 
     private func optionBinding(_ keyPath: WritableKeyPath<FindState, Bool>) -> Binding<Bool> {
