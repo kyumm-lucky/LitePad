@@ -29,9 +29,17 @@ final class EditorSession: ObservableObject {
     private static let sessionKey = "lastSession.urls"
     /// 每个标签页的自动保存订阅（防抖写盘）
     private var autosaveCancellables: [UUID: AnyCancellable] = [:]
+    /// 每个标签页的恢复区订阅（R6：未标题正文去抖写入，照自动保存的形态）
+    private var recoveryCancellables: [UUID: AnyCancellable] = [:]
+    /// 未标题文稿的恢复区（R6 / R7）：与会话恢复并列的另一条通道，两者互不读写对方的键
+    private let recovery = RecoveryStore.shared
 
     init() {
         restoreSessionOrNewTab()
+        // 恢复区的写入失败与超限要有可见提示：写不进去等于「内容不丢」降级成无保护
+        recovery.onAlert = { [weak self] alert in
+            self?.reportRecoveryAlert(alert)
+        }
         // 应用激活时检测外部修改；退出前记录当前会话
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
@@ -56,10 +64,7 @@ final class EditorSession: ObservableObject {
             }
         }
         guard tabs.isEmpty, settings.launchAction == .newDocument else { return }
-        let empty = EditorTab()
-        tabs = [empty]
-        selectedTabIndex = 0
-        installAutosave(for: empty)
+        addUntitledTab()
     }
 
     var selectedTab: EditorTab? {
@@ -67,15 +72,36 @@ final class EditorSession: ObservableObject {
         return tabs[selectedTabIndex]
     }
 
-    /// 新增标签页的统一入口：挂接自动保存订阅
+    /// 新增标签页的统一入口：挂接自动保存与恢复区订阅
     private func addTab(_ tab: EditorTab) {
         tabs.append(tab)
         selectedTabIndex = tabs.count - 1
         installAutosave(for: tab)
+        installRecovery(for: tab)
+    }
+
+    /// 建一张未标题标签并纳入会话：标题在这里统一分配（R8 / KD4），
+    /// 三处新建入口与启动恢复共用这一条路径，不各自造一份标题规则。
+    /// `savedText` 默认取 `text`（新建的空标签）；恢复出来的内容必须显式传空串，
+    /// 让它带脏标记（没有保存基准），否则正常退出不会向用户确认、条目也不会删除；
+    /// `title` 只在恢复时传入（沿用存下来的标题），其余场合按当前标签集合往后编号
+    @discardableResult
+    private func addUntitledTab(text: String = "", savedText: String? = nil,
+                                title: String? = nil) -> EditorTab {
+        let tab = EditorTab(text: text, savedText: savedText,
+                            untitledTitle: title ?? nextUntitledTitle())
+        addTab(tab)
+        return tab
+    }
+
+    /// 下一个未标题标题：扫描当前已打开标签的展示名取最大序号 + 1（KD4）。
+    /// 已绑定文件的标签展示的是文件名，不参与未标题编号
+    private func nextUntitledTitle() -> String {
+        UntitledTitle.next(after: tabs.filter { $0.fileURL == nil }.map(\.displayName))
     }
 
     func newTab() {
-        addTab(EditorTab())
+        addUntitledTab()
     }
 
     func openFile() {
@@ -256,7 +282,8 @@ final class EditorSession: ObservableObject {
     @discardableResult
     private func saveAs(tab: EditorTab) -> Bool {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = tab.fileURL?.lastPathComponent ?? "未命名.txt"
+        // 默认文件名取标签的标题（R8）：未标题标签是「新文件2」，就默认存成「新文件2.txt」
+        panel.nameFieldStringValue = tab.fileURL?.lastPathComponent ?? "\(tab.displayName).txt"
         panel.message = "选择保存位置"
         guard panel.runModal() == .OK, let url = panel.url else { return false }
         // 绑定前按 KTD16 的统一规则查重：目标路径已由别的标签持有时中止，
@@ -345,6 +372,9 @@ final class EditorSession: ObservableObject {
         }
         tab.markSaved(to: url)
         tab.writeFailureReported = false
+        // 标签一旦绑定了文件就不再是未标题文稿，恢复区里的条目就此离开（HTD 的
+        // 「另存为成功并绑定文件」出口；显式保存与另存为共用这一个落点）
+        retireRecoveryEntry(for: tab)
         persistSession()
         return nil
     }
@@ -376,6 +406,66 @@ final class EditorSession: ObservableObject {
                               + WriteFailure.dirtyNote + "请手动保存或先处理该问题。")
     }
 
+    // MARK: - 恢复区（R6 / R7）
+
+    /// 未标题标签的恢复区写入：照自动保存的形态，正文停止变化一秒后落盘。
+    /// 会话恢复只记文件路径，未标题正文只能走这条并列通道（KTD3）
+    private func installRecovery(for tab: EditorTab) {
+        recoveryCancellables[tab.id] = tab.$text
+            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink(receiveValue: { [weak self, weak tab] _ in
+                Task { @MainActor in
+                    guard let self, let tab else { return }
+                    self.syncRecoveryEntry(for: tab)
+                }
+            })
+    }
+
+    /// 一次去抖后的同步：正文非空才写入，正文被清空则删除条目（HTD 的四个删除出口之一）。
+    /// 已绑定文件的标签不写恢复区 —— 它不是未标题文稿，收尾也已经在绑定那一刻做过
+    private func syncRecoveryEntry(for tab: EditorTab) {
+        guard let title = tab.untitledTitle, tab.fileURL == nil else { return }
+        if tab.text.isEmpty {
+            recovery.remove(title: title)
+        } else {
+            recovery.write(RecoveryEntry(title: title, text: tab.text, savedAt: Date()),
+                           writer: tab.id)
+        }
+    }
+
+    /// 一个标签彻底结束时把它的恢复区条目移出（带墓碑，拦下去抖窗口里的在途写入）。
+    /// 三个结束出口共用这一处：关闭标签、正常退出确认通过、另存为绑定文件
+    private func retireRecoveryEntry(for tab: EditorTab) {
+        guard let title = tab.untitledTitle else { return }
+        recovery.retire(title: title, writer: tab.id)
+    }
+
+    /// 恢复区的可见提示：上报由存储侧按去重键收敛（同一条连续出现只弹一次），
+    /// 这里只按类型给文案
+    private func reportRecoveryAlert(_ alert: RecoveryAlert) {
+        switch alert {
+        case .writeFailed(let message):
+            presentErrorAlert(title: "恢复区无法写入",
+                              message: message + "\n未标题文稿的正文没有进入恢复区："
+                                  + "在这些内容写入磁盘之前，异常终止（崩溃或强制退出）后会丢失。"
+                                  + "请手动保存这些文稿。")
+        case .entryTooLarge(let title, let bytes, let limit):
+            presentErrorAlert(title: "恢复区没有保护“\(title)”",
+                              message: "这篇文稿的正文有 \(Self.byteCountText(bytes))，"
+                                  + "超过恢复区单条上限（\(Self.byteCountText(limit))）。"
+                                  + "它不会被写入恢复区，异常终止后无法恢复，请手动保存。")
+        case .evicted(let title, let limit):
+            presentNotice(title: "恢复区已满",
+                          message: "恢复区最多保留 \(limit) 条未标题文稿，"
+                              + "最旧的“\(title)”已被移出：异常终止后无法恢复它，请手动保存。")
+        }
+    }
+
+    /// 字节数的展示口径：提示里只说大概量级
+    private static func byteCountText(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+    }
+
     func closeSelectedTab() {
         guard tabs.indices.contains(selectedTabIndex) else { return }
         closeTab(at: selectedTabIndex)
@@ -385,14 +475,19 @@ final class EditorSession: ObservableObject {
         closeTabs(at: [index])
     }
 
-    /// 关闭族的批量终态动作：只有这里真正移除标签——先摘掉自动保存订阅，再统一移除，
+    /// 关闭族的批量终态动作：只有这里真正移除标签——先摘掉自动保存与恢复区订阅，再统一移除，
     /// 最后沿用既有 closeTab 的索引规则落位活动标签；标签集合不会被清空，始终保留一个空标签。
-    /// 恢复区条目的删除是批量终态动作，U6 接在这一处，不进入逐个确认的过程
+    /// 恢复区条目的删除是批量终态动作，接在这一处、不进入逐个确认的过程（KTD17）
     private func finalizeClosedTabs(_ closed: [EditorTab]) {
         guard !closed.isEmpty else { return }
         let closing = Set(closed.map(\.id))
         for id in closing {
             autosaveCancellables.removeValue(forKey: id)
+            recoveryCancellables.removeValue(forKey: id)
+        }
+        // 关闭标签且确认不保存或已保存：这些标签的恢复区条目到此离开（HTD 的第二个出口）
+        for tab in closed {
+            retireRecoveryEntry(for: tab)
         }
 
         let previous = tabs
@@ -400,10 +495,8 @@ final class EditorSession: ObservableObject {
         tabs.removeAll { closing.contains($0.id) }
 
         if tabs.isEmpty {
-            let empty = EditorTab() // 始终保留一个空标签，与 Notepad++ 行为一致
-            tabs = [empty]
-            selectedTabIndex = 0
-            installAutosave(for: empty)
+            // 始终保留一个空标签，与 Notepad++ 行为一致
+            addUntitledTab()
         } else if previous.indices.contains(previousSelection),
                   let kept = tabs.firstIndex(where: { $0 === previous[previousSelection] }) {
             // 活动标签没被关掉：让它继续是活动标签（与 closeTab 关非活动标签时的落位一致）
@@ -428,6 +521,11 @@ final class EditorSession: ObservableObject {
             case .cancel:
                 return false
             }
+        }
+        // 全部确认通过：本次运行的未标题内容到此离开恢复区（HTD 的「正常退出」出口）。
+        // 逐个确认期间一条都不动——取消退出时现场必须与发起前一致（KTD17）
+        for tab in tabs {
+            retireRecoveryEntry(for: tab)
         }
         return true
     }

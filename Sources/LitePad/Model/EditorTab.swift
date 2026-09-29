@@ -138,6 +138,29 @@ enum FindEngine {
     }
 }
 
+/// 未标题标签的标题编号（R8 / KD4）：「新文件1」「新文件2」……
+/// 序号取当前已打开标签中出现过的最大序号 + 1，因此同一会话内不会出现两张同名标签；
+/// 不承诺跨会话的全局递增 —— 恢复出来的标签沿用存下来的标题，也从它们继续往下算
+enum UntitledTitle {
+    static let prefix = "新文件"
+
+    /// 下一个标题：`titles` 是当前已打开标签的展示名
+    static func next(after titles: [String]) -> String {
+        "\(prefix)\(maxSequence(in: titles) + 1)"
+    }
+
+    /// 一份标题里出现过的最大序号；一个都取不到时按 0（下一个即「新文件1」）
+    static func maxSequence(in titles: [String]) -> Int {
+        titles.compactMap(sequence(in:)).max() ?? 0
+    }
+
+    /// 从「新文件N」式标题里取序号；不是这个形状的（含已按扩展名保存的文件名）返回 nil
+    private static func sequence(in title: String) -> Int? {
+        guard title.hasPrefix(prefix) else { return nil }
+        return Int(title.dropFirst(prefix.count))
+    }
+}
+
 /// 保存前清理的执行结果（会话 ⇄ 编辑视图的桥接口径）
 enum SaveCleanupOutcome {
     /// 已清理或无需清理
@@ -151,6 +174,10 @@ enum SaveCleanupOutcome {
 /// 单个标签页对应的文档状态
 final class EditorTab: ObservableObject, Identifiable {
     let id = UUID()
+    /// 未标题标签的稳定标题（R8 / KD4）：「新文件1」式，由会话在建立标签时分配，
+    /// 标签存活期间不变（不随活动标签或编辑内容变化）。绑定文件后展示名改用文件名，
+    /// 这个标题只用来定位恢复区条目；打开文件建出的标签为 nil
+    let untitledTitle: String?
 
     @Published var text: String {
         didSet { refreshDirty() }
@@ -172,16 +199,20 @@ final class EditorTab: ObservableObject, Identifiable {
     var fileModificationDate: Date?
 
     var displayName: String {
-        fileURL?.lastPathComponent ?? "未命名"
+        fileURL?.lastPathComponent ?? untitledTitle ?? "未命名"
     }
 
-    /// 未指定编码 / 换行符时取全局设置的默认值；语法按扩展名检测，无文件时取默认语法设置
+    /// 未指定编码 / 换行符时取全局设置的默认值；语法按扩展名检测，无文件时取默认语法设置。
+    /// `untitledTitle` 由会话分配（恢复出来的标签传入存下来的标题）；`savedText` 是落盘基准，
+    /// 不传即「刚建出的干净标签」，恢复出来的内容则要显式传空串让它带脏标记
     init(fileURL: URL? = nil, text: String = "", savedText: String? = nil,
-         encoding: TextEncoding? = nil, lineEnding: LineEnding? = nil) {
+         encoding: TextEncoding? = nil, lineEnding: LineEnding? = nil,
+         untitledTitle: String? = nil) {
         let settings = AppSettings.shared
         let resolvedEncoding = encoding ?? settings.defaultEncoding
         let resolvedLineEnding = lineEnding ?? settings.defaultLineEnding
         self.fileURL = fileURL
+        self.untitledTitle = untitledTitle
         self.language = fileURL != nil
             ? LanguageDefinition.detect(from: fileURL)
             : settings.defaultLanguage
@@ -193,6 +224,9 @@ final class EditorTab: ObservableObject, Identifiable {
         self.savedLineEnding = resolvedLineEnding
         self.isDirty = false
         self.fileModificationDate = Self.fileDate(at: fileURL)
+        // 基准与正文不一致的初始态（恢复出来的标签把基准传成空串）要在建出来的那一刻就是脏的：
+        // init 期间 didSet 不会触发，脏标记必须在这里对齐一次
+        refreshDirty()
     }
 
     /// 读取文件当前修改时间
