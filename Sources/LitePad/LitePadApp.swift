@@ -27,7 +27,15 @@ struct LitePadApp: App {
                 .background(ReopenWindowBridge { appDelegate.reopenWindow = $0 })
                 // 退出保护需要会话：委托对象由 SwiftUI 在 App 构造期创建，早于 @StateObject
                 // 的会话，所以在这里补上引用（首帧之前没有脏标签，晚接不影响保护）
-                .onAppear { appDelegate.session = session }
+                .onAppear {
+                    appDelegate.session = session
+                    // 恢复提示必须晚于首帧：会话构造期与视图构建期都还没有窗口，
+                    // 那时弹模态会抢走随后用于设置窗口尺寸与标题的目标窗口。
+                    // 抛到下一个运行循环再弹，让窗口先完成首次布局与标题设置
+                    DispatchQueue.main.async {
+                        session.presentRecoveryPromptIfNeeded()
+                    }
+                }
         }
         .commands {
             CommandGroup(replacing: .newItem) {

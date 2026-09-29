@@ -33,8 +33,14 @@ final class EditorSession: ObservableObject {
     private var recoveryCancellables: [UUID: AnyCancellable] = [:]
     /// 未标题文稿的恢复区（R6 / R7）：与会话恢复并列的另一条通道，两者互不读写对方的键
     private let recovery = RecoveryStore.shared
+    /// 写过恢复区的标签（条目归它所有）。恢复区按稳定标题为键，同名条目可能来自上一次运行，
+    /// 只有真正写过它的标签才有资格在正文被清空时删掉它
+    private var recoveryOwners: Set<UUID> = []
+    /// 启动时恢复区里有待恢复的条目：会话构造期读一次，提示要等首帧之后才弹
+    private var hasPendingRecovery = false
 
     init() {
+        hasPendingRecovery = !recovery.allEntries().isEmpty
         restoreSessionOrNewTab()
         // 恢复区的写入失败与超限要有可见提示：写不进去等于「内容不丢」降级成无保护
         recovery.onAlert = { [weak self] alert in
@@ -63,7 +69,9 @@ final class EditorSession: ObservableObject {
                 open(url: url, recordsRecent: false, alertOnError: false)
             }
         }
-        guard tabs.isEmpty, settings.launchAction == .newDocument else { return }
+        // 恢复区里有待恢复的内容时先不建空占位标签：恢复提示要等首帧之后才弹，
+        // 而空占位标签的标题会同待恢复条目撞名，一秒后的去抖同步会把那份内容删掉
+        guard tabs.isEmpty, settings.launchAction == .newDocument, !hasPendingRecovery else { return }
         addUntitledTab()
     }
 
@@ -426,18 +434,78 @@ final class EditorSession: ObservableObject {
     private func syncRecoveryEntry(for tab: EditorTab) {
         guard let title = tab.untitledTitle, tab.fileURL == nil else { return }
         if tab.text.isEmpty {
+            // 只删自己写过的条目：同名条目可能属于上一次运行的文稿（恢复区按稳定标题为键），
+            // 刚建出的空标签没有资格把它删掉
+            guard recoveryOwners.remove(tab.id) != nil else { return }
             recovery.remove(title: title)
-        } else {
-            recovery.write(RecoveryEntry(title: title, text: tab.text, savedAt: Date()),
-                           writer: tab.id)
+            return
         }
+        recovery.write(RecoveryEntry(title: title, text: tab.text, savedAt: Date()), writer: tab.id)
+        recoveryOwners.insert(tab.id)
     }
 
     /// 一个标签彻底结束时把它的恢复区条目移出（带墓碑，拦下去抖窗口里的在途写入）。
     /// 三个结束出口共用这一处：关闭标签、正常退出确认通过、另存为绑定文件
     private func retireRecoveryEntry(for tab: EditorTab) {
         guard let title = tab.untitledTitle else { return }
+        recoveryOwners.remove(tab.id)
         recovery.retire(title: title, writer: tab.id)
+    }
+
+    // MARK: - 启动恢复（R6 / R7）
+
+    /// 启动时的恢复入口：恢复区非空就提示恢复或放弃（R7）。
+    /// **必须在首帧之后调用** —— 会话构造期还没有窗口，此时弹模态会抢走随后用于设置窗口尺寸与标题的目标窗口。
+    /// 与两项启动设置无关：只要恢复区非空就提示
+    func presentRecoveryPromptIfNeeded() {
+        guard hasPendingRecovery else { return }
+        hasPendingRecovery = false
+        let entries = recovery.allEntries()
+        guard !entries.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "有 \(entries.count) 份未保存的未标题文稿"
+        // 放弃是不可逆的批量删除，必须把名单列出来：不列名单的一键清空会删掉多份找不回的内容
+        alert.informativeText = "上次运行结束时这些文稿还没有存到文件，已留在恢复区：\n\n"
+            + entries.map { "・\($0.title)" }.joined(separator: "\n")
+            + "\n\n「恢复」会把它们重新建成标签页；「放弃并删除」会永久删除这 \(entries.count) 份内容，无法找回。"
+        alert.addButton(withTitle: "恢复")
+        alert.addButton(withTitle: "放弃并删除")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            restore(entries)
+        case .alertSecondButtonReturn:
+            recovery.removeAll()
+        default:
+            break
+        }
+        // 放弃之后窗口不该空着；恢复的场合已经有标签了，这里只会走「放弃」这一支
+        fillLaunchPlaceholderIfNeeded()
+    }
+
+    /// 按恢复区里的条目建标签（R6 / R8）：沿用存下来的标题，追加在现有标签之后。
+    /// 内容不带保存基准（`savedText` 传空串），因此建出来就是未保存状态 —— 否则正常退出
+    /// 不会向用户确认、条目也不会删除，内容会在退出时无声消失，而且每次启动都重复提示
+    private func restore(_ entries: [RecoveryEntry]) {
+        var firstRestored: EditorTab?
+        for entry in entries {
+            let tab = addUntitledTab(text: entry.text, savedText: "", title: entry.title)
+            if firstRestored == nil {
+                firstRestored = tab
+            }
+        }
+        // 恢复出来的第一张成为活动标签；条目先不清空——新标签的重新写入是去抖的，
+        // 提前清空会在窗口期内崩溃时真丢内容
+        if let firstRestored, let index = tabs.firstIndex(where: { $0 === firstRestored }) {
+            selectedTabIndex = index
+        }
+    }
+
+    /// 启动占位标签：恢复提示处理完后窗口不该空着（放弃、或提示被关掉时兜底）。
+    /// 与会话恢复同一条口径：只有「启动时创建新文稿」才建
+    private func fillLaunchPlaceholderIfNeeded() {
+        guard tabs.isEmpty, AppSettings.shared.launchAction == .newDocument else { return }
+        addUntitledTab()
     }
 
     /// 恢复区的可见提示：上报由存储侧按去重键收敛（同一条连续出现只弹一次），
