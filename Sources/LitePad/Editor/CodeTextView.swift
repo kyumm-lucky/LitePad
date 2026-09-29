@@ -129,6 +129,13 @@ struct CodeTextView: NSViewRepresentable {
             session?.openDroppedFiles(urls)
         }
 
+        // 自动缩进的文档上下文：语言决定块开头判定、行尾符决定回车插入的换行，
+        // 视图不持有标签，取值都经闭包回取（标签被拆除后回落为纯文本与 LF）
+        textView.indentContextProvider = { [weak tab] in
+            EditorIndentContext(language: tab?.language ?? .plain,
+                                lineSeparator: tab?.lineEnding.separator ?? "\n")
+        }
+
         textView.string = tab.text
         SyntaxHighlighter.highlight(textView: textView, language: tab.language)
         context.coordinator.highlightedLanguage = tab.language
@@ -232,14 +239,20 @@ struct CodeTextView: NSViewRepresentable {
                 }
             }
 
-            // 段落样式：行高倍数 / 自动换行缩进 / 书写方向
+            // 段落样式：行高倍数 / 自动换行缩进 / 书写方向 / 制表位
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineHeightMultiple = CGFloat(max(0.5, min(5, config.lineHeight)))
             paragraph.baseWritingDirection = config.writingDirection
+            let charWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
             if config.wraps, config.wrapIndent > 0 {
-                let charWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
                 paragraph.headIndent = charWidth * CGFloat(min(32, config.wrapIndent))
             }
+            // 制表位按缩进宽度换算：真实制表符的显示宽度与缩进指示线的一级宽度同源（KTD10）。
+            // 基数取空格宽度——缩进指示线也是按空格宽度量的，两边同一把尺子才谈得上对齐；
+            // tabStops 必须先清空：段落样式自带一组 28 点默认制表位，非空时 defaultTabInterval 不生效
+            let spaceWidth = (" " as NSString).size(withAttributes: [.font: font]).width
+            paragraph.tabStops = []
+            paragraph.defaultTabInterval = spaceWidth * CGFloat(max(1, config.indentWidth))
             textView.defaultParagraphStyle = paragraph
             textView.typingAttributes[.font] = font
             textView.typingAttributes[.paragraphStyle] = paragraph

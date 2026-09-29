@@ -11,6 +11,9 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
     let lineComment: String?
     let blockCommentStart: String?
     let blockCommentEnd: String?
+    /// 可见的块开头字符：回车时若光标前的最后一个非空白字符落在这一组里，新行再加一级缩进。
+    /// 纯文本与未知扩展名（回落为纯文本）为空集，即只继承缩进、不加级
+    let blockOpeners: [Character]
     let singleQuoteStrings: Bool
     let tripleQuoteStrings: Bool
     let highlightTags: Bool
@@ -21,13 +24,17 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
         id: "plain", displayName: "纯文本", extensions: ["txt", "text", "log"],
         keywords: [], keywordsIgnoreCase: false,
         lineComment: nil, blockCommentStart: nil, blockCommentEnd: nil,
+        blockOpeners: [],
         singleQuoteStrings: false, tripleQuoteStrings: false, highlightTags: false
     )
 
+    // 标记语言不给块开头字符：开标签与闭标签的收尾字符都是 `>`，而这几门语言的
+    // 换行只有「加级」没有「减级」，按 `>` 加级会让每个闭标签行之后越缩越深
     static let html = LanguageDefinition(
         id: "html", displayName: "HTML", extensions: ["html", "htm"],
         keywords: [], keywordsIgnoreCase: true,
         lineComment: nil, blockCommentStart: "<!--", blockCommentEnd: "-->",
+        blockOpeners: [],
         singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: true
     )
 
@@ -35,6 +42,7 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
         id: "xml", displayName: "XML", extensions: ["xml", "plist"],
         keywords: [], keywordsIgnoreCase: true,
         lineComment: nil, blockCommentStart: "<!--", blockCommentEnd: "-->",
+        blockOpeners: [],
         singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: true
     )
 
@@ -52,6 +60,7 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
         ],
         keywordsIgnoreCase: true,
         lineComment: "--", blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["("],
         singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
     )
 
@@ -69,6 +78,7 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
         ],
         keywordsIgnoreCase: false,
         lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["{", "(", "["],
         singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
     )
 
@@ -82,6 +92,7 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
         ],
         keywordsIgnoreCase: false,
         lineComment: "#", blockCommentStart: nil, blockCommentEnd: nil,
+        blockOpeners: [":", "{", "(", "["],
         singleQuoteStrings: true, tripleQuoteStrings: true, highlightTags: false
     )
 
@@ -96,6 +107,7 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
         ],
         keywordsIgnoreCase: false,
         lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["{", "(", "["],
         singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
     )
 
@@ -104,6 +116,7 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
         keywords: ["true", "false", "null"],
         keywordsIgnoreCase: false,
         lineComment: nil, blockCommentStart: nil, blockCommentEnd: nil,
+        blockOpeners: ["{", "["],
         singleQuoteStrings: false, tripleQuoteStrings: false, highlightTags: false
     )
 
@@ -114,5 +127,41 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
     static func detect(from url: URL?) -> LanguageDefinition {
         guard let ext = url?.pathExtension.lowercased(), !ext.isEmpty else { return .plain }
         return all.first { $0.extensions.contains(ext) } ?? .plain
+    }
+}
+
+/// 缩进规则：回车继承与加级、Tab 插入内容、一级缩进的宽度口径都集中在这里的纯逻辑，
+/// 按键处理只做取值与插入，装饰层按同一份宽度画缩进指示线（KTD10），两边不各写一份
+enum IndentRules {
+    /// 缩进宽度的可配置区间：小于 1 构不成一级缩进，大于 16 后一级缩进会超出常见页面宽度
+    static let widthRange = 1...16
+
+    /// 收敛缩进宽度到可配置区间（输入框可以填任意整数，取值一律过这里）
+    static func clampedWidth(_ raw: Int) -> Int {
+        min(widthRange.upperBound, max(widthRange.lowerBound, raw))
+    }
+
+    /// 一级缩进的字符串：插入空格时是缩进宽度个空格，否则是一个制表符
+    /// （制表符的显示宽度由编辑器按同一缩进宽度设置的制表位保证，见 CodeTextView 的外观应用）
+    static func unit(width: Int, insertSpaces: Bool) -> String {
+        insertSpaces ? String(repeating: " ", count: clampedWidth(width)) : "\t"
+    }
+
+    /// 行首空白（空格与制表符）：行中回车也只继承这一段，不带入行内已有的空格
+    static func leadingWhitespace(of line: String) -> String {
+        String(line.prefix { $0 == " " || $0 == "\t" })
+    }
+
+    /// 光标前的行内文本是否以该语言的块开头字符结尾：只看最后一个非空白字符，
+    /// 纯文本与未知扩展名的块开头字符集为空，判定恒为假（只继承、不加级）
+    static func opensBlock(before linePrefix: String, language: LanguageDefinition) -> Bool {
+        guard let last = linePrefix.trimmingCharacters(in: .whitespaces).last else { return false }
+        return language.blockOpeners.contains(last)
+    }
+
+    /// 回车后新行的缩进：继承行首空白，块开头再加一级
+    static func newLineIndent(leadingWhitespace: String, opensBlock: Bool,
+                              width: Int, insertSpaces: Bool) -> String {
+        opensBlock ? leadingWhitespace + unit(width: width, insertSpaces: insertSpaces) : leadingWhitespace
     }
 }

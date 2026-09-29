@@ -226,6 +226,15 @@ final class AppSettings: ObservableObject {
     @Published var showIndentGuides: Bool {
         didSet { defaults.set(showIndentGuides, forKey: "settings.indentGuides") }
     }
+    /// 一级缩进的宽度（可配置区间 1 - 16，越界取值在应用侧收敛）：回车继承的加级、
+    /// Tab 插入的空格数与缩进指示线的一级宽度共用这一口径（KTD10）
+    @Published var indentWidth: Int {
+        didSet { defaults.set(indentWidth, forKey: "settings.indentWidth") }
+    }
+    /// 按 Tab 键插入空格；关闭时插入一个制表符（其显示宽度同样按缩进宽度换算）
+    @Published var insertSpacesForTab: Bool {
+        didSet { defaults.set(insertSpacesForTab, forKey: "settings.tabInsertsSpaces") }
+    }
     @Published var pageGuideEnabled: Bool {
         didSet { defaults.set(pageGuideEnabled, forKey: "settings.pageGuideEnabled") }
     }
@@ -381,6 +390,8 @@ final class AppSettings: ObservableObject {
             otherControl: defaults.object(forKey: "settings.inv.otherControl") as? Bool ?? true
         )
         showIndentGuides = defaults.object(forKey: "settings.indentGuides") as? Bool ?? false
+        indentWidth = defaults.object(forKey: "settings.indentWidth") as? Int ?? 4
+        insertSpacesForTab = defaults.object(forKey: "settings.tabInsertsSpaces") as? Bool ?? true
         pageGuideEnabled = defaults.object(forKey: "settings.pageGuideEnabled") as? Bool ?? false
         pageGuideColumn = defaults.object(forKey: "settings.pageGuideColumn") as? Int ?? 80
         highlightCurrentLine = defaults.object(forKey: "settings.currentLine") as? Bool ?? false

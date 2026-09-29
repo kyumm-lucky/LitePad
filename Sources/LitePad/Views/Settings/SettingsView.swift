@@ -1002,6 +1002,23 @@ private struct WindowSettingsPane: View {
                 LitePadToggle(title: "改变背景颜色", isOn: $settings.highlightCurrentLine)
             }
             SettingsDivider()
+            SettingsRow("缩进：") {
+                VStack(alignment: .leading, spacing: 6) {
+                    LitePadToggle(title: "Tab 键插入空格", isOn: $settings.insertSpacesForTab)
+                    HStack(spacing: 6) {
+                        Text("缩进宽度：")
+                        TextField("", value: $settings.indentWidth, format: .number)
+                            .textFieldStyle(.plain)
+                            .settingsFieldFrame(width: 52)
+                            .multilineTextAlignment(.trailing)
+                        SettingsStepper(onIncrement: { bumpIndentWidth(1) },
+                                        onDecrement: { bumpIndentWidth(-1) })
+                        Text("个字符").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(.leading, 18)
+                }
+            }
+            SettingsDivider()
             SettingsRow("换行：") {
                 VStack(alignment: .leading, spacing: 6) {
                     LitePadToggle(title: "换行以适合编辑器宽度", isOn: $settings.wrapLines)
@@ -1091,6 +1108,11 @@ private struct WindowSettingsPane: View {
 
     private func bumpExtraScroll(_ delta: Double) {
         settings.extraScrollPercent = min(100, max(0, settings.extraScrollPercent + delta))
+    }
+
+    /// 缩进宽度收敛到可配置区间：输入框可以填任意整数，微调按钮落在区间内
+    private func bumpIndentWidth(_ delta: Int) {
+        settings.indentWidth = IndentRules.clampedWidth(settings.indentWidth + delta)
     }
 }
 
