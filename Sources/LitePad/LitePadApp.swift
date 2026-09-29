@@ -70,9 +70,34 @@ struct LitePadApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 由 LitePadApp 在根视图出现时注入（见那里的说明）
-    weak var session: EditorSession?
+    weak var session: EditorSession? {
+        didSet {
+            guard let session else { return }
+            for url in pendingOpenFiles {
+                session.open(url: url)
+            }
+            pendingOpenFiles.removeAll()
+        }
+    }
+    /// 启动时系统可能先交付文件，再创建主窗口和编辑会话
+    private var pendingOpenFiles: [URL] = []
     /// 由根视图注入的 openWindow 动作，用于重建窗口（见 applicationShouldHandleReopen）
     var reopenWindow: (() -> Void)?
+
+    func application(_ sender: NSApplication, open urls: [URL]) {
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty else { return }
+        if let session {
+            for url in files {
+                session.open(url: url)
+            }
+            if !sender.windows.contains(where: { $0.canBecomeMain || $0.isMiniaturized }) {
+                reopenWindow?()
+            }
+        } else {
+            pendingOpenFiles.append(contentsOf: files)
+        }
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // 会话尚未注入时是启动早期，此时不可能有未保存内容

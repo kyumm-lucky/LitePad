@@ -91,6 +91,13 @@ final class EditorSession: ObservableObject {
 
     /// 打开的完整路径：会话恢复不记录最近列表、不弹错误框
     func open(url: URL, recordsRecent: Bool, alertOnError: Bool) {
+        if let index = tabs.firstIndex(where: { $0.fileURL?.standardizedFileURL == url.standardizedFileURL }) {
+            selectedTabIndex = index
+            if recordsRecent {
+                recordRecent(url)
+            }
+            return
+        }
         do {
             let data = try Data(contentsOf: url)
             let settings = AppSettings.shared
