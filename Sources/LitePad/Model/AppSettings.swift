@@ -269,6 +269,10 @@ final class AppSettings: ObservableObject {
     @Published var statusBarWordCount: Bool {
         didSet { defaults.set(statusBarWordCount, forKey: "settings.sb.wordCount") }
     }
+    /// 状态栏显示选区的字符数与词数（无选区时不显示）
+    @Published var statusBarSelectionCount: Bool {
+        didSet { defaults.set(statusBarSelectionCount, forKey: "settings.sb.selectionCount") }
+    }
     @Published var statusBarCaretOffset: Bool {
         didSet { defaults.set(statusBarCaretOffset, forKey: "settings.sb.caretOffset") }
     }
@@ -404,6 +408,7 @@ final class AppSettings: ObservableObject {
         statusBarLineCount = defaults.object(forKey: "settings.sb.lineCount") as? Bool ?? true
         statusBarCharCount = defaults.object(forKey: "settings.sb.charCount") as? Bool ?? true
         statusBarWordCount = defaults.object(forKey: "settings.sb.wordCount") as? Bool ?? true
+        statusBarSelectionCount = defaults.object(forKey: "settings.sb.selectionCount") as? Bool ?? true
         statusBarCaretOffset = defaults.object(forKey: "settings.sb.caretOffset") as? Bool ?? true
         statusBarCaretLine = defaults.object(forKey: "settings.sb.caretLine") as? Bool ?? true
         statusBarCaretColumn = defaults.object(forKey: "settings.sb.caretColumn") as? Bool ?? true

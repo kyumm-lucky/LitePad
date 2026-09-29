@@ -314,6 +314,10 @@ private struct StatusBarView: View {
             if settings.statusBarWordCount {
                 Text("字：\(tab.stats.wordCount)")
             }
+            // 只在真有选区时出现：字符数为 0 即无选区（见 DocumentStats）
+            if settings.statusBarSelectionCount, tab.stats.selectionCharacterCount > 0 {
+                Text("选区：\(tab.stats.selectionCharacterCount) 字符 · \(tab.stats.selectionWordCount) 词")
+            }
             if settings.statusBarCaretOffset {
                 Text("位置：\(tab.stats.caretOffset)")
             }

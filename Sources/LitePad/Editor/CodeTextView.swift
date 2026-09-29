@@ -178,20 +178,16 @@ struct CodeTextView: NSViewRepresentable {
             context.coordinator.highlightedLanguage = tab.language
             SyntaxHighlighter.highlight(textView: textView, language: tab.language)
             textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
-            // 整串重写会清空 layoutManager 临时属性，重置高亮守卫让下方按新状态重建
-            context.coordinator.appliedFindState = nil
+            // 整串重写会清空 layoutManager 临时属性，重置高亮快照让下方按新状态重建
+            context.coordinator.appliedHighlight = HighlightSnapshot()
         } else if languageChanged {
             context.coordinator.highlightedLanguage = tab.language
             SyntaxHighlighter.highlight(textView: textView, language: tab.language)
         }
 
-        // 查找状态变化（含面板关闭）时重建高亮；选区/滚动只由 findNavigationHandler 驱动，
+        // 高亮（查找匹配 + 选中词出现）有变化时重建；选区/滚动只由 findNavigationHandler 驱动，
         // 避免用户输入时被抢走光标
-        if context.coordinator.appliedFindState != tab.findState {
-            let oldState = context.coordinator.appliedFindState
-            context.coordinator.appliedFindState = tab.findState
-            applyFindHighlight(textView: textView, oldState: oldState, state: tab.findState)
-        }
+        context.coordinator.applyHighlightsIfNeeded(textView: textView)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -201,8 +197,8 @@ struct CodeTextView: NSViewRepresentable {
         weak var textView: NSTextView?
         var highlightedLanguage: LanguageDefinition?
         var boundsObserver: NSObjectProtocol?
-        /// 已应用过查找高亮的面板状态，避免无变化时重复全文清设
-        var appliedFindState: FindState?
+        /// 已应用过的高亮快照（查找匹配 + 选中词出现），避免无变化时重复全文清设
+        fileprivate var appliedHighlight = HighlightSnapshot()
         /// 已应用到文本视图的外观配置；变化时才重设整篇属性
         var appliedAppearance: EditorAppearanceConfig?
 
@@ -311,9 +307,8 @@ struct CodeTextView: NSViewRepresentable {
                 }
             }
 
-            // 属性重设会重建字形，查找高亮需按当前状态重建
-            appliedFindState = nil
-            applyFindHighlight(textView: textView, oldState: nil, state: tab.findState)
+            // 属性重设会重建字形，高亮需按当前状态重建
+            rebuildHighlights(textView: textView)
             textView.needsDisplay = true
         }
 
@@ -340,12 +335,42 @@ struct CodeTextView: NSViewRepresentable {
             if let decorations = textView.layoutManager as? DecorationsLayoutManager {
                 decorations.updateCurrentLine(for: textView)
             }
+            // 选中词高亮跟随选区；组字期间视图里是 marked text，等组字结束再重建
+            if !textView.hasMarkedText() {
+                applyHighlightsIfNeeded(textView: textView)
+            }
         }
 
-        /// 把光标与文本统计发布到标签页模型，驱动状态栏刷新
+        /// 把光标、选区与文本统计发布到标签页模型，驱动状态栏刷新
         func publishStats(from textView: NSTextView) {
+            let selection = textView.selectedRange()
             tab.updateStats(DocumentStats.compute(text: textView.string,
-                                                  caretOffset: textView.selectedRange().location))
+                                                  caretOffset: selection.location,
+                                                  selectionRange: selection))
+        }
+
+        /// 按当前查找状态与选区重算高亮快照，有变化才重建；两者写同一层临时背景属性，
+        /// 必须合成一次应用（各画各的会互相抹掉）
+        func applyHighlightsIfNeeded(textView: NSTextView) {
+            let snapshot = currentHighlightSnapshot(textView: textView)
+            guard snapshot != appliedHighlight else { return }
+            let old = appliedHighlight
+            appliedHighlight = snapshot
+            applyHighlights(textView: textView, old: old, new: snapshot)
+        }
+
+        /// 无条件重建：外观属性重设会重建字形、丢掉已画的高亮，此处按当前状态重画
+        func rebuildHighlights(textView: NSTextView) {
+            let old = appliedHighlight
+            let snapshot = currentHighlightSnapshot(textView: textView)
+            appliedHighlight = snapshot
+            applyHighlights(textView: textView, old: old, new: snapshot)
+        }
+
+        /// 当前应有的高亮快照（查找匹配 + 选中词出现）
+        private func currentHighlightSnapshot(textView: NSTextView) -> HighlightSnapshot {
+            HighlightSnapshot(find: tab.findState,
+                              selection: selectedWordHighlight(for: textView))
         }
 
         /// 重读落点：把按编码重读得到的整串正文换进编辑视图。整串替换前先清空撤销栈（KTD14）——
@@ -369,9 +394,9 @@ struct CodeTextView: NSViewRepresentable {
             let length = (newText as NSString).length
             let location = min(selection.location, length)
             textView.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
-            // 整串替换会清空 layoutManager 的临时属性（查找高亮画在那一层）：重置高亮守卫，
+            // 整串替换会清空 layoutManager 的临时属性（高亮画在那一层）：重置高亮快照，
             // 让 updateNSView 按新状态重建，与模型侧赋值那条路同一口径（KTD15）
-            appliedFindState = nil
+            appliedHighlight = HighlightSnapshot()
             return true
         }
     }
@@ -501,19 +526,51 @@ private func performSaveCleanup(textView: NSTextView, tab: EditorTab) -> SaveCle
     return .done
 }
 
-/// 重建查找高亮（layoutManager 临时背景属性，独立于语法高亮的存储属性层）：
-/// 当前匹配深色，其余浅色。
-/// 清除范围收敛为"旧 ∪ 新匹配区间"——背景临时属性只可能落在匹配区间上，与全文清除严格等价
-private func applyFindHighlight(textView: NSTextView, oldState: FindState?, state: FindState?) {
+/// 一次应用的全部高亮：查找匹配与选中词出现。
+/// 两者写的是同一层临时背景属性（layoutManager 的临时属性表），各自独立清设会互相抹掉，
+/// 因此合成一份快照一次应用
+private struct HighlightSnapshot: Equatable {
+    var find: FindState?
+    var selection: SelectedWordHighlight?
+
+    /// 快照覆盖的全部区间
+    var ranges: [NSRange] {
+        (find?.matches ?? []) + (selection?.ranges ?? [])
+    }
+}
+
+/// 当前选区的选中词高亮：无选区或不在启用口径内时为 nil。
+/// 走字面扫描而非查找引擎（KTD11）——查找已支持转义语法，选中文本里的字面反斜杠序列会被当成转义
+private func selectedWordHighlight(for textView: NSTextView) -> SelectedWordHighlight? {
+    let text = textView.string
+    let nsText = text as NSString
+    let range = NSIntersectionRange(textView.selectedRange(),
+                                    NSRange(location: 0, length: nsText.length))
+    guard range.length > 0 else { return nil }
+    return SelectedWordHighlight.scan(selection: nsText.substring(with: range), in: text)
+}
+
+/// 重建高亮（layoutManager 临时背景属性，独立于语法高亮的存储属性层）：
+/// 先按「旧 ∪ 新」的全部区间清除——背景临时属性只可能落在这些区间上，与全文清除严格等价；
+/// 再先画选中词的出现（全部同色），后画查找匹配（当前匹配深色，其余浅色）——
+/// 同一区间上两者重合时查找高亮在上，当前匹配的位置不会被选中词高亮盖掉
+private func applyHighlights(textView: NSTextView, old: HighlightSnapshot, new: HighlightSnapshot) {
     guard let layoutManager = textView.layoutManager else { return }
     let full = NSRange(location: 0, length: (textView.string as NSString).length)
-    let staleRanges = ((oldState?.matches ?? []) + (state?.matches ?? []))
+    let staleRanges = (old.ranges + new.ranges)
         .map { NSIntersectionRange($0, full) }
         .filter { $0.length > 0 }
     for range in staleRanges {
         layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
     }
-    guard let state, !state.matches.isEmpty else { return }
+    if let selection = new.selection {
+        // 与当前选区一起看：比查找高亮更淡，出现与选中词区分得开
+        let color = NSColor.controlAccentColor.withAlphaComponent(0.22)
+        for range in selection.ranges {
+            layoutManager.setTemporaryAttributes([.backgroundColor: color], forCharacterRange: range)
+        }
+    }
+    guard let state = new.find, !state.matches.isEmpty else { return }
     let dimmed = NSColor.controlAccentColor.withAlphaComponent(0.25)
     let active = NSColor.controlAccentColor.withAlphaComponent(0.45)
     for (index, range) in state.matches.enumerated() {

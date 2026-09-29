@@ -1068,6 +1068,7 @@ private struct WindowSettingsPane: View {
                         LitePadToggle(title: "当前列", isOn: $settings.statusBarCaretColumn)
                     }
                     .frame(maxWidth: 220, alignment: .leading)
+                    LitePadToggle(title: "选区", isOn: $settings.statusBarSelectionCount)
                 }
             }
         }
