@@ -5,9 +5,8 @@ import AppKit
 final class LineNumberRulerView: NSRulerView {
     private weak var textView: NSTextView?
     private let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
-    private let labelColor = NSColor.secondaryLabelColor
-    private let separatorColor = NSColor.separatorColor
-    /// 行号栏底色跟随编辑器透明度，半透明时不产生整块白色遮挡
+    /// 行号栏底色跟随编辑器透明度，半透明时不产生整块白色遮挡。
+    /// 底色是编辑器同一块背景，不随语法主题走；行号与分隔线随主题解析
     private var gutterColor: NSColor {
         NSColor.textBackgroundColor.withAlphaComponent(
             CGFloat(max(0.1, min(1, AppSettings.shared.editorOpacity / 100))))
@@ -25,15 +24,23 @@ final class LineNumberRulerView: NSRulerView {
         fatalError("init(coder:) is not supported")
     }
 
+    /// 系统深浅切换后底色与主题取色都要按新外观重取
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
+
     override func drawHashMarksAndLabels(in rect: NSRect) {
         guard let textView,
               let layoutManager = textView.layoutManager,
               let container = textView.textContainer else { return }
 
+        // 行号栏的用色按当前外观从主题解析：主题换侧或系统深浅切换后重画即得新色
+        let palette = EditorPalette.resolve(AppSettings.shared.syntaxTheme, for: effectiveAppearance)
         let bounds = self.bounds
         gutterColor.setFill()
         bounds.fill()
-        separatorColor.setStroke()
+        palette.gutterSeparator.setStroke()
         let separator = NSBezierPath()
         separator.move(to: NSPoint(x: bounds.maxX - 0.5, y: bounds.minY))
         separator.line(to: NSPoint(x: bounds.maxX - 0.5, y: bounds.maxY))
@@ -42,7 +49,7 @@ final class LineNumberRulerView: NSRulerView {
 
         let attributes: [NSAttributedString.Key: Any] = [
             .font: labelFont,
-            .foregroundColor: labelColor
+            .foregroundColor: palette.gutterLabel
         ]
         let labelHeight = ("0" as NSString).size(withAttributes: attributes).height
 

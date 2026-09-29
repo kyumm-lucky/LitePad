@@ -206,7 +206,7 @@ struct SettingsView: View {
             }
         case .appearance:
             SettingsCard(title: "字体与主题",
-                         subtitle: "调整代码阅读时的字体、颜色和透明度",
+                         subtitle: "调整代码阅读时的字体、语法配色和透明度",
                          icon: "eyeglasses") {
                 AppearanceSettingsPane()
             }
@@ -862,6 +862,10 @@ private struct AppearanceSettingsPane: View {
             }
             SettingsRow("外观：") {
                 RadioRow(options: AppearanceMode.allCases, selection: $settings.appearanceMode,
+                         label: \.displayName)
+            }
+            SettingsRow("语法主题：") {
+                RadioRow(options: SyntaxTheme.allCases, selection: $settings.syntaxTheme,
                          label: \.displayName)
             }
             SettingsRow("顶栏与状态栏：") {

@@ -179,6 +179,10 @@ final class AppSettings: ObservableObject {
     @Published var appearanceMode: AppearanceMode {
         didSet { defaults.set(appearanceMode.rawValue, forKey: "settings.appearance") }
     }
+    /// 语法高亮的配色主题：每套都区分浅色与深色取值，按外观解析（默认跟随系统）
+    @Published var syntaxTheme: SyntaxTheme {
+        didSet { defaults.set(syntaxTheme.rawValue, forKey: "settings.syntaxTheme") }
+    }
     @Published var statusBarStyle: StatusBarBackgroundStyle {
         didSet { defaults.set(statusBarStyle.rawValue, forKey: "settings.statusBarStyle") }
     }
@@ -378,6 +382,8 @@ final class AppSettings: ObservableObject {
         lineHeightMultiple = defaults.object(forKey: "settings.lineHeight") as? Double ?? 1.0
         appearanceMode = defaults.string(forKey: "settings.appearance")
             .flatMap(AppearanceMode.init(rawValue:)) ?? .system
+        syntaxTheme = defaults.string(forKey: "settings.syntaxTheme")
+            .flatMap(SyntaxTheme.init(rawValue:)) ?? .system
         statusBarStyle = defaults.string(forKey: "settings.statusBarStyle")
             .flatMap(StatusBarBackgroundStyle.init(rawValue:)) ?? .opaque
         editorOpacity = defaults.object(forKey: "settings.editorOpacity") as? Double ?? 100

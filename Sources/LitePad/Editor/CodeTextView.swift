@@ -140,6 +140,13 @@ struct CodeTextView: NSViewRepresentable {
                                 lineSeparator: tab?.lineEnding.separator ?? "\n")
         }
 
+        // 系统深浅切换（或外观模式切换）后的重取：高亮颜色写进文本存储、装饰与行号栏按外观解析取色，
+        // 三者都不会自己跟着外观变（KTD6）
+        textView.onAppearanceChanged = { [weak coordinator = context.coordinator, weak textView] in
+            guard let coordinator, let textView else { return }
+            coordinator.applyAppearanceChange(textView: textView)
+        }
+
         textView.string = tab.text
         SyntaxHighlighter.highlight(textView: textView, language: tab.language)
         context.coordinator.highlightedLanguage = tab.language
@@ -312,6 +319,13 @@ struct CodeTextView: NSViewRepresentable {
                 }
             }
 
+            // 主题取色是解析后的具体色值，写进文本存储后不会自己变：每次应用外观都按配置里的主题重跑一次高亮（KTD6）
+            SyntaxHighlighter.highlight(textView: textView, language: tab.language,
+                                        palette: EditorPalette.resolve(config.syntaxTheme,
+                                                                       for: textView.effectiveAppearance))
+            // 行号栏的用色同样按主题与外观解析，换主题或换外观都要重画
+            scrollView?.verticalRulerView?.needsDisplay = true
+
             // 属性重设会重建字形，高亮需按当前状态重建
             rebuildHighlights(textView: textView)
             textView.needsDisplay = true
@@ -370,6 +384,16 @@ struct CodeTextView: NSViewRepresentable {
             let snapshot = currentHighlightSnapshot(textView: textView)
             appliedHighlight = snapshot
             applyHighlights(textView: textView, old: old, new: snapshot)
+        }
+
+        /// 外观变化（系统深浅切换 / 外观模式切换）后的落点：语法色是写进文本存储的具体色值，
+        /// 装饰层与行号栏的取色也都是按外观解析的，三者都要按新外观重取（KTD6）。
+        /// 外观配置本身没有变化，走不到 applyAppearanceIfNeeded，必须由外观变化钩子显式重跑
+        func applyAppearanceChange(textView: NSTextView) {
+            SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+            rebuildHighlights(textView: textView)
+            textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
+            textView.needsDisplay = true
         }
 
         /// 当前应有的高亮快照（查找匹配 + 选中词出现）

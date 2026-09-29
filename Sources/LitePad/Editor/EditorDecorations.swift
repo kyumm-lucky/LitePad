@@ -18,6 +18,8 @@ struct EditorAppearanceConfig: Equatable {
     var currentLine: Bool
     var extraScroll: Double
     var opacity: Double
+    /// 语法配色主题：装饰层与行号栏的用色由它解析（KTD6）
+    var syntaxTheme: SyntaxTheme
 
     static func from(_ settings: AppSettings) -> EditorAppearanceConfig {
         EditorAppearanceConfig(
@@ -35,7 +37,8 @@ struct EditorAppearanceConfig: Equatable {
             pageGuideColumn: settings.pageGuideEnabled ? settings.pageGuideColumn : nil,
             currentLine: settings.highlightCurrentLine,
             extraScroll: settings.extraScrollPercent,
-            opacity: settings.editorOpacity
+            opacity: settings.editorOpacity,
+            syntaxTheme: settings.syntaxTheme
         )
     }
 }
@@ -73,28 +76,34 @@ final class DecorationsLayoutManager: NSLayoutManager {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let appearance, let textView = firstTextView else { return }
         let content = textView.string as NSString
+        // 用色按当前外观从主题解析：系统语义色与固定取值都落成这个外观下的具体色值，
+        // 解析只十二个颜色，绘制期直接取，不必另存一份缓存
+        let palette = EditorPalette.resolve(appearance.syntaxTheme, for: textView.effectiveAppearance)
 
         if appearance.currentLine {
-            drawCurrentLine(origin: origin, textView: textView, content: content)
+            drawCurrentLine(origin: origin, textView: textView, content: content,
+                            color: palette.currentLine)
         }
         if appearance.indentGuides {
             drawIndentGuides(indentWidth: appearance.indentWidth, glyphsToShow: glyphsToShow,
-                             origin: origin, textView: textView, content: content)
+                             origin: origin, textView: textView, content: content,
+                             color: palette.indentGuide)
         }
         if let column = appearance.pageGuideColumn {
-            drawPageGuide(column: column, origin: origin, textView: textView)
+            drawPageGuide(column: column, origin: origin, textView: textView,
+                          color: palette.pageGuide)
         }
         if let invisibles = appearance.invisibles {
             drawInvisibles(invisibles, glyphsToShow: glyphsToShow, origin: origin,
-                           textView: textView, content: content)
+                           textView: textView, content: content,
+                           color: palette.invisibles)
         }
     }
 
     // MARK: - 当前行
 
-    private func drawCurrentLine(origin: NSPoint, textView: NSTextView, content: NSString) {
+    private func drawCurrentLine(origin: NSPoint, textView: NSTextView, content: NSString, color: NSColor) {
         guard let range = currentLineCharRange, range.location <= content.length, numberOfGlyphs > 0 else { return }
-        let color = NSColor.controlAccentColor.withAlphaComponent(0.08)
         let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         var drew = false
         if glyphs.length > 0 {
@@ -124,7 +133,7 @@ final class DecorationsLayoutManager: NSLayoutManager {
     // MARK: - 缩进指示
 
     private func drawIndentGuides(indentWidth: Int, glyphsToShow: NSRange, origin: NSPoint,
-                                  textView: NSTextView, content: NSString) {
+                                  textView: NSTextView, content: NSString, color: NSColor) {
         guard let font = textView.font else { return }
         let spaceWidth = (" " as NSString).size(withAttributes: [.font: font]).width
         // 一级缩进的宽度与插入的缩进同源（KTD10）：空格行按缩进宽度算，
@@ -134,7 +143,6 @@ final class DecorationsLayoutManager: NSLayoutManager {
         // 行内字符从文本容器的行内边距之后开始画，制表位计在同一基准上：
         // 指示线要落在缩进段结束、正文开始的位置，起点必须同样加上这段边距
         let textPadding = textView.textContainer?.lineFragmentPadding ?? 0
-        let guideColor = NSColor.separatorColor.withAlphaComponent(0.35)
 
         enumerateLineFragments(forGlyphRange: glyphsToShow) { fragmentRect, _, _, glyphRange, _ in
             let charRange = self.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
@@ -154,7 +162,7 @@ final class DecorationsLayoutManager: NSLayoutManager {
                 let rect = NSRect(x: origin.x + fragmentRect.minX + textPadding + offset - 0.5,
                                   y: origin.y + fragmentRect.minY,
                                   width: 1, height: fragmentRect.height)
-                guideColor.setFill()
+                color.setFill()
                 rect.fill()
                 offset += unit
             }
@@ -163,23 +171,23 @@ final class DecorationsLayoutManager: NSLayoutManager {
 
     // MARK: - 列位置页面指示线
 
-    private func drawPageGuide(column: Int, origin: NSPoint, textView: NSTextView) {
+    private func drawPageGuide(column: Int, origin: NSPoint, textView: NSTextView, color: NSColor) {
         guard let font = textView.font else { return }
         let charWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
         let x = origin.x + charWidth * CGFloat(max(1, column))
         guard x >= 0, x <= textView.bounds.width + 1 else { return }
-        NSColor.separatorColor.withAlphaComponent(0.6).setFill()
+        color.setFill()
         NSRect(x: x - 0.5, y: 0, width: 1, height: textView.bounds.height).fill()
     }
 
     // MARK: - 不可见元素
 
     private func drawInvisibles(_ options: InvisiblesOptions, glyphsToShow: NSRange, origin: NSPoint,
-                                textView: NSTextView, content: NSString) {
+                                textView: NSTextView, content: NSString, color: NSColor) {
         guard let font = textView.font else { return }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: max(8, font.pointSize - 3), weight: .regular),
-            .foregroundColor: NSColor.tertiaryLabelColor
+            .foregroundColor: color
         ]
         let markerHeight = ("·" as NSString).size(withAttributes: attributes).height
 
@@ -262,6 +270,13 @@ final class LiteTextView: NSTextView {
     var onFileDrop: (([URL]) -> Void)?
     /// 自动缩进的文档上下文；未装配时按键全部回落为系统默认行为
     var indentContextProvider: (() -> EditorIndentContext)?
+    /// 系统深浅切换（或外观模式切换）后的通知：高亮与装饰的取色都按外观解析，外观变了要按新外观重取（KTD6）
+    var onAppearanceChanged: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onAppearanceChanged?()
+    }
 
     /// 投放内容里的文件地址；纯文字投放返回 nil，那类投放维持系统默认行为。
     /// 可编辑的文本视图自带拖放并先消费落在文字区的投放，其后的 SwiftUI 投放目标收不到事件，
