@@ -40,6 +40,11 @@ struct LitePadApp: App {
                     }
                 }
         }
+        // 窗口尺寸的优先级（R21 / KTD7）：历史 frame > 设置里的固定尺寸。
+        // 场景的默认尺寸修饰符的语义正是「没有历史记录时才使用」，因此有历史记录时
+        // 设置里的固定值不参与，系统按场景恢复用户上次的位置与大小；
+        // 不要另行设置窗口的 frame 自动保存名 —— 系统已按场景占用它，重设会分叉出第二个键
+        .defaultSize(width: defaultWindowWidth, height: defaultWindowHeight)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("新建标签页") { session.newTab() }
@@ -173,6 +178,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 /// 主窗口的场景标识（重建窗口时按它取）
 private let mainWindowID = "main"
+
+/// 没有历史窗口记录时使用的初始尺寸：设置页留空（自动）时给出与内容最小尺寸一致的取值，
+/// 与「系统在没有任何指定时的选择」等价（内容本身就有 760 × 480 的最小尺寸）
+private let defaultWindowWidth: CGFloat = CGFloat(AppSettings.shared.windowWidth ?? 760)
+private let defaultWindowHeight: CGFloat = CGFloat(AppSettings.shared.windowHeight ?? 480)
 
 /// 取当前窗口的 openWindow 动作交给应用委托：环境值只能在视图里读，读到的动作转交出去，
 /// 供窗口全关后重建窗口。同 WindowSizeSync 的写法，零尺寸视图只为挂 onAppear

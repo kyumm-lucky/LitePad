@@ -22,7 +22,6 @@ struct ContentView: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            WindowSizeSync()
             HStack(spacing: 0) {
                 mainColumn
                 if let tab = session.selectedTab, session.activeTool != nil {
@@ -255,29 +254,6 @@ private final class LayoutMetrics: ObservableObject {
 /// 主栏投放目标的悬停状态（本工程无 @State 宏，用轻量对象承载）
 private final class FileDropState: ObservableObject {
     @Published var isTargeted = false
-}
-
-/// 启动时按设置应用固定窗口大小（仅新窗口出现时生效一次；空值表示自动）
-private struct WindowSizeSync: View {
-    @ObservedObject private var settings = AppSettings.shared
-
-    var body: some View {
-        Color.clear
-            .frame(width: 0, height: 0)
-            .onAppear {
-                guard settings.windowWidth != nil || settings.windowHeight != nil,
-                      let window = NSApp.keyWindow else { return }
-                guard let contentView = window.contentView else { return }
-                var size = contentView.frame.size
-                if let width = settings.windowWidth {
-                    size.width = CGFloat(max(200, width))
-                }
-                if let height = settings.windowHeight {
-                    size.height = CGFloat(max(200, height))
-                }
-                window.setContentSize(size)
-            }
-    }
 }
 
 /// 窗口标题跟随当前文件名与脏状态：脏标记变化只有直接观察 EditorTab 才能感知，
