@@ -72,6 +72,17 @@ struct LitePadApp: App {
                 Button("设置…") { session.toggleSettings() }
                     .keyboardShortcut(",", modifiers: .command)
             }
+            // 行操作（R17）：跟在粘贴板分组之后，与编辑菜单里框架自带的那几项相邻而不重名。
+            // 作用于选中行、无选区时作用于全文；没有行注释符号的语言其注释两项置灰
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                Menu("行操作") {
+                    ForEach(LineOperationKind.allCases) { kind in
+                        Button(kind.displayName) { session.applyLineOperation(kind) }
+                            .disabled(!session.isLineOperationAvailable(kind))
+                    }
+                }
+            }
             // 菜单栏「工具」：与标题栏「工具」下拉同一入口，供键盘 / 触控板访问
             CommandMenu("工具") {
                 ForEach(TextToolKind.allCases) { kind in

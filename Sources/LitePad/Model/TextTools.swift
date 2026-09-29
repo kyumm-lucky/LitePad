@@ -9,6 +9,7 @@ enum TextToolKind: String, CaseIterable, Identifiable {
     case base64
     case json
     case diff
+    case lines
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .base64: return "Base64"
         case .json: return "JSON 格式化"
         case .diff: return "字符串对比"
+        case .lines: return "行操作"
         }
     }
 
@@ -31,11 +33,13 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .base64: return "arrow.left.arrow.right"
         case .json: return "curlybraces"
         case .diff: return "rectangle.split.2x1"
+        case .lines: return "arrow.up.arrow.down"
         }
     }
 
     /// 两档方向的名称，顺序与 ConvertDirection.allCases 一致：
-    /// JSON 工具的两档是「格式化（.encode）/ 压缩（.decode）」，其余是「编码 / 解码」
+    /// JSON 工具的两档是「格式化（.encode）/ 压缩（.decode）」，其余是「编码 / 解码」。
+    /// 行操作不设方向档（一项操作一个按钮），永不渲染这个分段控件
     var directionLabels: [String] {
         self == .json ? ["格式化", "压缩"] : ConvertDirection.allCases.map(\.displayName)
     }
@@ -78,6 +82,14 @@ final class TextToolsState: ObservableObject {
     @Published var diffIgnoreCase = false
     @Published var diffIgnoreWhitespace = false
     @Published private(set) var diff = DiffResult.empty
+
+    // MARK: - 行操作
+
+    /// 最近选用的行操作（nil = 还没选过）：抽屉里的行操作是一排按钮，选中一项才算一次结果
+    @Published private(set) var lineOperation: LineOperationKind?
+    /// 当前标签语法的行注释符号：注释类操作要用它，nil 表示该语言没有行注释符号。
+    /// 由抽屉按标签语言同步（见 updateLineComment），保存在这里是为了让输入变化后的重算不用再问环境
+    private var lineComment: String?
 
     // MARK: - 变更入口
 
@@ -126,6 +138,24 @@ final class TextToolsState: ObservableObject {
         recompute()
     }
 
+    // MARK: - 行操作入口
+
+    /// 选用一项行操作并按当前输入算出结果；lineComment 是当前标签语法的行注释符号
+    /// （没有行注释符号的语言上注释类操作会失败，按钮侧已按同一口径置灰，这里是兜底）
+    func applyLineOperation(_ kind: LineOperationKind, lineComment: String?) {
+        self.lineComment = lineComment
+        lineOperation = kind
+        recompute()
+    }
+
+    /// 同步当前标签语法的行注释符号：切换标签或改语言后，注释类操作的结果与可用性跟着变
+    func updateLineComment(_ symbol: String?) {
+        guard symbol != lineComment else { return }
+        lineComment = symbol
+        guard kind == .lines, lineOperation != nil else { return }
+        recompute()
+    }
+
     /// 任一输入或选项变化后重算：只算当前工具用得到的那一份
     func recompute() {
         guard kind.isConverter else {
@@ -156,6 +186,15 @@ final class TextToolsState: ObservableObject {
             outcome = direction == .encode
                 ? JSONFormatter.pretty(input, indent: jsonIndent)
                 : JSONFormatter.minify(input)
+        case .lines:
+            // 抽屉里的行操作作用于输入文本的全部行；还没选操作时结果区空着
+            guard let operation = lineOperation else {
+                output = ""
+                errorMessage = nil
+                return
+            }
+            outcome = LineOperations.apply(operation, to: input, lineRange: nil,
+                                           lineComment: lineComment)
         case .diff:
             return
         }

@@ -838,6 +838,22 @@ final class EditorSession: ObservableObject {
         tab.writeBackHandler?(text, replaceSelection)
     }
 
+    // MARK: - 行操作
+
+    /// 对当前标签执行一项行操作：目标行范围与写回都在视图层完成（撤销协议路径必须在视图层走），
+    /// 标签还没有编辑视图时无动作
+    func applyLineOperation(_ kind: LineOperationKind) {
+        selectedTab?.lineOperationHandler?(kind)
+    }
+
+    /// 行操作在当前标签上是否可用：没有打开的标签一律不可用；
+    /// 注释类操作还要求当前语法有行注释符号（纯文本、HTML、JSON 置灰），
+    /// 与抽屉里操作按钮的可用性同一个口径
+    func isLineOperationAvailable(_ kind: LineOperationKind) -> Bool {
+        guard let tab = selectedTab else { return false }
+        return !kind.requiresLineComment || tab.language.lineComment != nil
+    }
+
     /// 弹出行号输入框并跳转到指定行；非法输入蜂鸣且不跳转
     func goToLine() {
         guard let tab = selectedTab else { return }

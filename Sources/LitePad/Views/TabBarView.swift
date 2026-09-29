@@ -101,7 +101,7 @@ struct TabBarView: View {
             .accessibilityLabel("设置")
     }
 
-    /// 扳手按钮：展开 / 收起工具下拉（其中列出五个工具，当前打开的一项带勾选）。
+    /// 扳手按钮：展开 / 收起工具下拉（其中列出全部工具，当前打开的一项带勾选）。
     /// 激活时扳手逆时针拧转 20° 并染上强调色，是"工具已打开"最直接的提示
     private var toolsButton: some View {
         Button {

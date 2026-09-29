@@ -300,6 +300,10 @@ final class EditorTab: ObservableObject, Identifiable {
     /// 工具结果写回：由 CodeTextView 安装（撤销协议路径必须在视图层执行）；
     /// useSelection 为真替换当前选区（无选区则插入光标处），为假替换全文
     var writeBackHandler: ((String, Bool) -> Void)?
+    /// 行操作回调：由 CodeTextView 安装（撤销协议路径必须在视图层执行）、视图拆除时清回 nil。
+    /// 目标范围是选区覆盖到的整行（无选区时是全文），这个范围既不是当前选区也不是全文，
+    /// 只有视图层算得出来；视图算出范围后调共用的纯逻辑，再整段替换（一次可撤销的动作）
+    var lineOperationHandler: ((LineOperationKind) -> Void)?
     /// 保存前清理回调：由 CodeTextView 安装（撤销协议路径必须在视图层执行），
     /// 视图拆除时清回 nil。显式保存前调用：清理必须是一次可整体撤销的编辑动作，
     /// 不得改模型文本再推给视图——那会给撤销栈埋下失效区间（KTD5、KTD14）

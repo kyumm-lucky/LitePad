@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// 工具抽屉：贴窗口右缘的通栏面板（高度与窗口一致），从右向左滑入，左缘可拖拽调宽。
-/// 承载编码转换、JSON 格式化与字符串对比三类工具，输入默认取编辑器选区（无选区取全文），
+/// 承载编码转换、JSON 格式化、字符串对比与行操作四类工具，输入默认取编辑器选区（无选区取全文），
 /// 结果可复制或写回编辑器
 struct ToolsDrawer: View {
     @ObservedObject var tools: TextToolsState
@@ -49,10 +49,14 @@ struct ToolsDrawer: View {
             // 工具切换时整块内容换场：方向由工具在列表中的前后关系决定（见 TextToolsState.select），
             // 旧内容与新内容同向移动，读起来像面板里的一列内容被翻过去
             Group {
-                if tools.kind.isConverter {
-                    ConverterSection(tools: tools, tab: tab)
-                } else {
+                // 三套排布：编码转换与行操作是「输入 → 结果」，对比是 A/B 两栏
+                switch tools.kind {
+                case .diff:
                     DiffSection(tools: tools, tab: tab)
+                case .lines:
+                    LineOperationsSection(tools: tools, tab: tab)
+                default:
+                    ConverterSection(tools: tools, tab: tab)
                 }
             }
             .id(tools.kind)
@@ -322,7 +326,8 @@ private struct ConverterSection: View {
                                 segmentWidth: 58)
                     .transition(.opacity)
             }
-        case .diff:
+        case .diff, .lines:
+            // 对比工具走自己的两栏排布，行操作没有工具专属选项
             EmptyView()
         }
     }
@@ -530,6 +535,90 @@ private struct DiffRowView: View {
             .font(.system(size: 10, design: .monospaced))
             .foregroundStyle(.tertiary)
             .frame(width: 30, alignment: .trailing)
+    }
+}
+
+/// 行操作：菜单里那一套操作的抽屉形态（KD5 的共用实现），沿用「输入 → 结果 + 写回」。
+/// 输入取编辑器选区 / 全文，点一项操作算出结果，结果可复制或写回编辑器
+private struct LineOperationsSection: View {
+    @ObservedObject var tools: TextToolsState
+    @ObservedObject var tab: EditorTab
+    @EnvironmentObject private var session: EditorSession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            PanelSectionLabel(title: "操作", detail: "作用于输入文本的每一行")
+            operations
+
+            PanelSectionLabel(title: "输入", detail: "编辑器选区 / 全文")
+            CodeTextEditor(text: inputBinding, placeholder: "在此输入或粘贴文本")
+
+            PanelSectionLabel(title: "结果", detail: resultDetail, isError: tools.errorMessage != nil)
+            PanelResultText(text: tools.errorMessage ?? tools.output,
+                            isError: tools.errorMessage != nil)
+
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                CopyButton(text: tools.output)
+                Button {
+                    session.writeBackToolsResult(tools.output, replaceSelection: true, tab: tab)
+                } label: {
+                    Label("替换选区", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(PanelActionButtonStyle(tone: .neutral))
+                .help("替换编辑器当前选区；无选区时插入到光标处")
+                Button {
+                    session.writeBackToolsResult(tools.output, replaceSelection: false, tab: tab)
+                } label: {
+                    Label("替换全文", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(PanelActionButtonStyle(tone: .accent))
+                .help("用结果替换编辑器全文（可 ⌘Z 回滚）")
+            }
+            .controlSize(.small)
+            // 还没选操作时结果区是空的，此时写回会把选区清空；结果确实算成了空串（如整段都是行尾空白）
+            // 则允许写回，所以这里卡的是「没选过操作」而不是「结果为空」
+            .disabled(tools.input.isEmpty || tools.lineOperation == nil)
+        }
+        // 行注释符号随标签语言变化：注释两项的可用性与已选操作的结果都要跟着重算
+        .onAppear { tools.updateLineComment(tab.language.lineComment) }
+        .onChange(of: tab.language) { tools.updateLineComment($0.lineComment) }
+    }
+
+    /// 操作按钮：两列排布，当前选用的那一项染色；注释两项在没有行注释符号的语言下不可选
+    private var operations: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)],
+                  spacing: 6) {
+            ForEach(LineOperationKind.allCases) { kind in
+                Button {
+                    tools.applyLineOperation(kind, lineComment: tab.language.lineComment)
+                } label: {
+                    Text(kind.displayName)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PanelActionButtonStyle(tone: tools.lineOperation == kind ? .accent : .neutral))
+                .disabled(!isAvailable(kind))
+                .opacity(isAvailable(kind) ? 1 : 0.55)
+                .help(isAvailable(kind)
+                      ? "对输入的每一行执行：\(kind.displayName)"
+                      : "当前语法（\(tab.language.displayName)）没有行注释符号")
+            }
+        }
+        .animation(Motion.control, value: tools.lineOperation)
+    }
+
+    /// 注释类操作要求当前语法有行注释符号（与菜单项的置灰口径一致）
+    private func isAvailable(_ kind: LineOperationKind) -> Bool {
+        !kind.requiresLineComment || tab.language.lineComment != nil
+    }
+
+    private var resultDetail: String {
+        if tools.errorMessage != nil { return "不可用" }
+        return tools.lineOperation?.displayName ?? "选择一项操作"
+    }
+
+    private var inputBinding: Binding<String> {
+        Binding(get: { tools.input }, set: { tools.updateInput($0) })
     }
 }
 

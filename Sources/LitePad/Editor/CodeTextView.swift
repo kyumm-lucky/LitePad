@@ -104,6 +104,10 @@ struct CodeTextView: NSViewRepresentable {
             guard let textView else { return }
             writeBack(replacement, useSelection: useSelection, textView: textView, tab: tab)
         }
+        tab.lineOperationHandler = { [weak textView, weak tab] kind in
+            guard let textView else { return }
+            applyLineOperation(kind, textView: textView, tab: tab)
+        }
         tab.saveCleanupHandler = { [weak coordinator = context.coordinator, weak textView] in
             // 视图与协调器同生共死：两者任一已释放说明编辑视图已拆除，交给会话走模型侧清理
             guard let coordinator, let textView else { return .noEditor }
@@ -153,6 +157,7 @@ struct CodeTextView: NSViewRepresentable {
         coordinator.tab.saveCleanupHandler = nil
         coordinator.tab.compositionStateProvider = nil
         coordinator.tab.reloadTextHandler = nil
+        coordinator.tab.lineOperationHandler = nil
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -491,6 +496,45 @@ private func writeBack(_ replacement: String, useSelection: Bool, textView: NSTe
     let inserted = NSRange(location: range.location, length: (replacement as NSString).length)
     textView.selectedRange = inserted
     textView.scrollRangeToVisible(inserted)
+}
+
+/// 行操作（菜单入口）：目标范围是选区覆盖到的整行，无选区时是全文——这个范围既不是当前选区
+/// 也不是全文，只有视图层算得出来。共用的纯逻辑算出该范围的新正文后整段替换，走
+/// shouldChangeText 撤销协议路径（单次 Cmd+Z 回退整次操作）。有选区时替换后选中操作过的整段，
+/// 便于确认范围；无选区（整篇）时不改选区，避免一次全选之后误删
+private func applyLineOperation(_ kind: LineOperationKind, textView: NSTextView, tab: EditorTab?) {
+    // 组字期间视图含未上屏的 marked text，模型与选区已过期，改写会错位；拒绝执行
+    guard !textView.hasMarkedText() else {
+        NSSound.beep()
+        return
+    }
+    let text = textView.string
+    let nsText = text as NSString
+    let selection = NSIntersectionRange(textView.selectedRange(),
+                                        NSRange(location: 0, length: nsText.length))
+    let lineRange = LineOperations.lineRange(for: selection, in: text)
+    let outcome = LineOperations.apply(kind, to: text, lineRange: lineRange,
+                                       lineComment: tab?.language.lineComment)
+    guard case .success(let replacement) = outcome else {
+        // 注释类操作落在没有行注释符号的语言上：菜单项已按同一口径置灰，这里只兜底
+        NSSound.beep()
+        return
+    }
+    let target = lineRange ?? NSRange(location: 0, length: nsText.length)
+    // 结果与原文一致时不写回：不留一条什么都没改的撤销记录
+    guard nsText.substring(with: target) != replacement else { return }
+    guard replaceRange(target, with: replacement, textView: textView, tab: tab) else { return }
+    if lineRange != nil {
+        let inserted = NSRange(location: target.location, length: (replacement as NSString).length)
+        textView.selectedRange = inserted
+        textView.scrollRangeToVisible(inserted)
+    } else {
+        // 整篇改写后光标按原偏移收拢到文末之内（整篇选中容易误删，这里不改成全选）；
+        // 滚动跟着回来：replaceRange 可能已把视图滚到当前查找匹配处
+        let caret = min(selection.location, (textView.string as NSString).length)
+        textView.selectedRange = NSRange(location: caret, length: 0)
+        textView.scrollRangeToVisible(textView.selectedRange())
+    }
 }
 
 /// 保存前按设置就地清理正文（删除行尾空白 / 补齐末尾换行）：整篇作为一次替换走
