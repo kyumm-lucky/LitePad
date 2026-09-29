@@ -242,6 +242,49 @@ final class DecorationsLayoutManager: NSLayoutManager {
 final class LiteTextView: NSTextView {
     /// 额外可滚动区域占可视高度的比例（0 = 关闭）
     var extraScrollFraction: CGFloat = 0
+    /// 文件拖入 / 离开编辑区的通知（驱动接收提示）
+    var onFileDragActive: ((Bool) -> Void)?
+    /// 文件投放：把地址交给会话的统一打开入口
+    var onFileDrop: (([URL]) -> Void)?
+
+    /// 投放内容里的文件地址；纯文字投放返回 nil，那类投放维持系统默认行为。
+    /// 可编辑的文本视图自带拖放并先消费落在文字区的投放，其后的 SwiftUI 投放目标收不到事件，
+    /// 所以文件投放必须在 AppKit 这一层接管
+    private func droppedFileURLs(_ sender: NSDraggingInfo) -> [URL]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = sender.draggingPasteboard
+            .readObjects(forClasses: [NSURL.self], options: options) as? [URL],
+              !urls.isEmpty else { return nil }
+        return urls
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard droppedFileURLs(sender) != nil else { return super.draggingEntered(sender) }
+        onFileDragActive?(true)
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard droppedFileURLs(sender) != nil else { return super.draggingUpdated(sender) }
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onFileDragActive?(false)
+        super.draggingExited(sender)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        onFileDragActive?(false)
+        super.draggingEnded(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let urls = droppedFileURLs(sender) else { return super.performDragOperation(sender) }
+        onFileDragActive?(false)
+        onFileDrop?(urls)
+        return true
+    }
 
     override func layout() {
         super.layout()

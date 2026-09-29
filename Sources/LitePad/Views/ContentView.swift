@@ -15,6 +15,8 @@ struct ContentView: View {
     @ObservedObject private var settings = AppSettings.shared
     /// 内容区宽度：抽屉宽度上限与拖拽夹取用（本工程无 @State 宏，测量值用轻量对象承载）
     @StateObject private var metrics = LayoutMetrics()
+    /// 主栏投放目标的悬停状态（同上，用轻量对象承载）
+    @StateObject private var dropState = FileDropState()
     /// 抽屉打开时给编辑区留出的最小宽度
     private static let editorMinWidth: CGFloat = 320
 
@@ -104,7 +106,7 @@ struct ContentView: View {
             TabBarView()
             if let tab = session.selectedTab {
                 // 切换标签时以 id 重建编辑器，避免不同标签间文本与选区串扰
-                CodeTextView(tab: tab)
+                CodeTextView(tab: tab, session: session)
                     .id(tab.id)
                     // 查找面板挂编辑区右上；工具抽屉打开时正好落在抽屉左侧
                     .overlay(alignment: .topTrailing) {
@@ -117,6 +119,31 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.clear)
+            // 拖到窗口任意位置的另一半：编辑区由编辑视图在 AppKit 层接管（落在文字区的投放
+            // 会被可编辑文本视图先消费），标签栏与状态栏这两处没有投放目标，由主栏外层接住。
+            // 两层共用同一种接收提示，亮起的范围就是实际可投放的范围
+            .dropDestination(for: URL.self) { urls, _ in
+                session.openDroppedFiles(urls)
+                return true
+            } isTargeted: { targeted in
+                dropState.isTargeted = targeted
+            }
+            .overlay { dropHighlight }
+    }
+
+    /// 文件拖入时的接收提示：整片可投放区一起亮（编辑区与主栏各上报自己的悬停状态，
+    /// 显示取两者的并集，任一处悬停都不会漏提示）
+    @ViewBuilder
+    private var dropHighlight: some View {
+        if session.isFileDropTargeted || dropState.isTargeted {
+            ZStack {
+                InterfaceStyle.accent.opacity(0.08)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(InterfaceStyle.accentBorder, lineWidth: 2)
+                    .padding(2)
+            }
+            .allowsHitTesting(false)
+        }
     }
 
     /// 抽屉当前生效宽度；关闭时为 0（下拉面板据此避让）
@@ -208,6 +235,11 @@ struct ContentView: View {
 /// 内容区宽度的测量结果：抽屉宽度上限与拖拽夹取用（本工程无 @State 宏，测量值用轻量对象承载）
 private final class LayoutMetrics: ObservableObject {
     @Published var width: CGFloat = 0
+}
+
+/// 主栏投放目标的悬停状态（本工程无 @State 宏，用轻量对象承载）
+private final class FileDropState: ObservableObject {
+    @Published var isTargeted = false
 }
 
 /// 启动时按设置应用固定窗口大小（仅新窗口出现时生效一次；空值表示自动）

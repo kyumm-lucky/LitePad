@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import UniformTypeIdentifiers
 
 /// 管理所有标签页的会话：新建 / 打开 / 保存 / 关闭 / 会话恢复 / 自动保存 / 外部修改检测
 @MainActor
@@ -16,6 +17,9 @@ final class EditorSession: ObservableObject {
     @Published var activeTool: TextToolKind?
     /// 主窗口左侧设置抽屉是否展开
     @Published var isSettingsPresented = false
+    /// 是否有文件正被拖在窗口上（驱动接收提示）：编辑区由编辑视图在 AppKit 层上报，
+    /// 标签栏与状态栏由主栏的投放目标上报
+    @Published var isFileDropTargeted = false
     /// 工具抽屉的实时宽度：拖拽调宽逐帧更新，松手才落盘（同时供下拉面板避让抽屉）
     @Published var toolsDrawerWidth = CGFloat(AppSettings.defaultToolsPanelWidth(for: .unicode))
     /// 工具面板的输入 / 选项 / 结果
@@ -136,6 +140,35 @@ final class EditorSession: ObservableObject {
     func clearRecentFiles() {
         RecentFiles.clear()
         recentFiles = []
+    }
+
+    /// 拖入文件的统一入口：编辑区与主栏的投放都走这里。
+    /// 目录与明确的非文本类型在入口处过滤，被拒的项目汇总成一次提示；
+    /// 其余交给统一打开入口——查重与符号链接解析都在那里，不在这里另立一份
+    func openDroppedFiles(_ urls: [URL]) {
+        var rejected: [String] = []
+        for url in urls where url.isFileURL {
+            guard Self.isOpenableByDrop(url) else {
+                rejected.append(url.lastPathComponent)
+                continue
+            }
+            open(url: url)
+        }
+        guard !rejected.isEmpty else { return }
+        presentNotice(title: "已跳过 \(rejected.count) 个项目",
+                      message: "下面这些不能打开为文稿（目录、图片、影音、压缩包等）：\n"
+                          + rejected.joined(separator: "\n"))
+    }
+
+    /// 拖入的项目能否作为文稿打开：目录一律不能；明确的非文本类型（图片 / 影音 / 压缩包 /
+    /// 磁盘映像 / 可执行文件 / PDF）拒绝，免得建出一屏乱码标签。类型判不出来时放行——
+    /// 没有扩展名的文本文件（Makefile 这类）不该被挡在外面，打开后的解码路径本来就能兜底
+    private static func isOpenableByDrop(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .contentTypeKey])
+        if values?.isDirectory == true { return false }
+        guard let type = values?.contentType else { return true }
+        let nonText: [UTType] = [.image, .audio, .movie, .archive, .diskImage, .executable, .pdf]
+        return !nonText.contains { type.conforms(to: $0) }
     }
 
     // MARK: - 文件身份（KTD16）

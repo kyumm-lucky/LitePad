@@ -6,6 +6,8 @@ import AppKit
 /// 避免逐键输入时丢失光标位置。
 struct CodeTextView: NSViewRepresentable {
     @ObservedObject var tab: EditorTab
+    /// 文件投放要交给会话的统一打开入口；拖动回调是单向的，不需要观察它
+    let session: EditorSession
     /// 观察全局设置：设置变化驱动 updateNSView 重应用外观
     @ObservedObject private var settings = AppSettings.shared
 
@@ -106,6 +108,16 @@ struct CodeTextView: NSViewRepresentable {
             // 视图与协调器同生共死：两者任一已释放说明编辑视图已拆除，交给会话走模型侧清理
             guard let coordinator, let textView else { return .noEditor }
             return performSaveCleanup(textView: textView, tab: coordinator.tab)
+        }
+
+        // 文件拖放：编辑区由文本视图在 AppKit 层接管（SwiftUI 的投放目标收不到这里的投放），
+        // 拖入 / 离开驱动接收提示，投放把地址交给会话的统一打开入口
+        textView.registerForDraggedTypes([.fileURL])
+        textView.onFileDragActive = { [weak session] active in
+            session?.isFileDropTargeted = active
+        }
+        textView.onFileDrop = { [weak session] urls in
+            session?.openDroppedFiles(urls)
         }
 
         textView.string = tab.text
