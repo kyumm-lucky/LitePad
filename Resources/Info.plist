@@ -12,6 +12,8 @@
 	<string>LitePad</string>
 	<key>CFBundleExecutable</key>
 	<string>LitePad</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.example.litepad</string>
 	<key>CFBundleInfoDictionaryVersion</key>

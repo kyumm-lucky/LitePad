@@ -17,7 +17,7 @@ macOS 原生轻量文本编辑器骨架：Swift + SwiftUI 外壳 + AppKit `NSTex
   - **JSON 格式化**：格式化（2 / 4 空格缩进）与压缩；只重排结构之间的空白，键顺序、数字写法（`1.0`、`1e5`、大整数）与转义原文都原样保留，空对象 / 空数组仍写作 `{}` / `[]`；语法错误按「第 N 行第 M 列」给出中文原因（注释、尾随逗号、单引号字符串等常见写法单独指明）
   - **字符串对比**：A / B 两栏（A 可取编辑器选区、B 可取其他标签页）逐行对比，差异行红绿标记 + 行内字符级高亮，可选忽略大小写与行首尾空白，差异可导出为 `+` / `-` 文本
   - **动效**：切换分段控件时选中胶囊像一滴水先横向拉长再回弹收回（`Views/LiquidSegmented.swift`，自绘并带无障碍语义）；切换工具时面板内容按工具在列表中的前后关系定向推入推出；标签栏扳手在工具打开时拧转并染强调色。所有曲线集中在 `Views/Motion.swift`，并遵循系统「减弱动态效果」设置
-- **打包**：`make app` 一键产出 `.app`（ad-hoc 签名），`make dmg` 产出带拖拽安装链接的 DMG
+- **打包**：`make app` 一键产出 `.app`（ad-hoc 签名），`make dmg` 产出带拖拽安装链接的 DMG；图标为矢量脚本绘制（黑底 + 白纸 + 文字行与光标，`make icon` 可重新生成 `.icns`）
 
 ## 环境要求
 
@@ -30,6 +30,7 @@ macOS 原生轻量文本编辑器骨架：Swift + SwiftUI 外壳 + AppKit `NSTex
 make run    # 开发调试（裸进程运行，菜单栏可能不完整，正式体验建议用 .app）
 make app    # 构建 build/LitePad.app
 open build/LitePad.app
+make icon   # 重新生成 Resources/AppIcon.icns（预览 build/AppIcon-1024.png）
 make dmg    # 构建 build/LitePad-0.1.0.dmg
 make clean
 ```
@@ -61,7 +62,9 @@ LitePad/
 │       └── Tools/
 │           └── ToolsPanelView.swift    # 工具抽屉：右缘通栏 + 左缘拖拽调宽，编码转换 + JSON + 字符串对比
 ├── Resources/Info.plist           # App 包描述（由打包脚本使用）
+├── Resources/AppIcon.icns         # 应用图标（scripts/make-icon.swift 生成）
 ├── scripts/make-app.sh            # 编译并组装 .app
+├── scripts/make-icon.swift        # 图标生成：Core Graphics 矢量绘制并转 .icns
 └── scripts/make-dmg.sh            # 生成 DMG
 ```
 
@@ -72,6 +75,7 @@ LitePad/
 - **标签切换**：以 `tab.id` 重建编辑视图，避免多标签间的文本与选区串扰。
 - **JSON 工具为什么不走 `JSONSerialization`**：解析成对象再序列化会丢掉键顺序，并把 `1.0`、`1e5`、超出双精度的大整数改成别的写法，写回编辑器等于改了原文；改为按记号重排原文后，格式化 / 压缩只动结构之间的空白，键顺序、数字写法与转义原文都原样保留，报错也能精确到行列（`Tools/JSONFormatter.swift`）。
 - **`Cmd+W`**：自定义的"关闭标签页"与系统"关闭窗口"共存在 File 菜单中，如发现快捷键被系统项抢占，可在菜单栏手动确认优先级。
+- **图标**：不用位图素材，`scripts/make-icon.swift` 按 macOS 图标网格（1024 画布内 824 见方、圆角 186）用 Core Graphics 画黑底圆角方块 + 白纸 + 六行文字条与蓝色光标，经 `iconutil` 转成 `.icns`；改配色或形状只需改脚本顶部的常量再 `make icon`，小尺寸由 1024 母版高质量缩放得到。
 
 ## Roadmap
 
@@ -81,7 +85,7 @@ LitePad/
 - [ ] 编码检测与转换（GBK 等）
 - [ ] 大文件优化（可见范围重绘、行号缓存）
 - [ ] 自定义主题 / 字体设置、软换行开关
-- [ ] App 图标、Developer ID 签名与公证（对外分发需要）
+- [ ] Developer ID 签名与公证（对外分发需要）
 
 ## 修改 App 名称
 

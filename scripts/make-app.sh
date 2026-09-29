@@ -16,6 +16,8 @@ rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
+# 应用图标（Info.plist 的 CFBundleIconFile 指向它；重新生成用 `make icon`）
+cp "Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/"
 # 声明简体中文本地化：系统提供的菜单（文件/编辑/显示/窗口/帮助）跟随中文
 cp -R "Resources/zh-Hans.lproj" "$APP_DIR/Contents/Resources/"
 
