@@ -24,4 +24,11 @@ cp -R "Resources/zh-Hans.lproj" "$APP_DIR/Contents/Resources/"
 echo "==> ad-hoc 签名"
 codesign --force -s - "$APP_DIR"
 
+# 刷新系统的文档类型登记：新装的包改了 CFBundleDocumentTypes 后，「打开方式」列表
+# 不一定立刻更新（未刷新时先重启 Finder 再看）。必须在签名之后跑 —— Info.plist 的
+# 写入会破坏签名，改登记不会。
+echo "==> 刷新文档类型登记"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+[ -x "$LSREGISTER" ] && "$LSREGISTER" -f "$APP_DIR" || echo "（跳过：未找到 lsregister）"
+
 echo "✅ 完成: $APP_DIR"

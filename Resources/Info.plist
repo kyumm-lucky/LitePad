@@ -12,16 +12,33 @@
 	<string>LitePad</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
+		<!-- 声明父类型 public.text 而不是逐条枚举：json / xml / html / css / yaml 这些都
+		     conform 到它（实测不误收 png 等二进制），一条声明即可让它们出现在系统
+		     「打开方式」列表里。等级 Alternate 保持不抢占默认编辑器。
+		     .ts 不声明 —— 系统把它归为传输流视频类型，声明等于宣称本应用能打开视频。 -->
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Plain Text</string>
+			<string>Text</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Alternate</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>public.plain-text</string>
+				<string>public.text</string>
+			</array>
+		</dict>
+		<!-- .plist 的类型只 conform 到 public.data，不在 public.text 的覆盖面内，单独声明 -->
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Property List</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.property-list</string>
 			</array>
 		</dict>
 	</array>
