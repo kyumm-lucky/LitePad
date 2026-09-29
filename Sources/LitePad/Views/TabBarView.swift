@@ -18,6 +18,7 @@ struct TabBarView: View {
                             onSelect: { session.selectedTabIndex = index },
                             onClose: { session.closeTab(at: index) }
                         )
+                        .contextMenu { tabContextMenu(at: index) }
                     }
                     Button(action: { session.newTab() }) {
                         Image(systemName: "plus")
@@ -59,6 +60,28 @@ struct TabBarView: View {
     /// 扳手按钮的激活态：下拉展开中、或抽屉已打开——两者都由这个按钮发起，收起后一同复位
     private var toolsButtonActive: Bool {
         session.expandedMenu == .tools || session.activeTool != nil
+    }
+
+    /// 标签右键菜单（R11 / R28）：六项固定顺序，作用对象是右键点中的那张标签，
+    /// 弹出菜单本身不改变活动标签。作用集合与置灰判定都取自会话的同一份计算（KTD17），
+    /// 收尾也共用关闭族那一条两阶段路径——视图层不做「边确认边关」
+    @ViewBuilder
+    private func tabContextMenu(at index: Int) -> some View {
+        let targets = session.tabCloseTargets(at: index)
+        let tab = session.tabs.indices.contains(index) ? session.tabs[index] : nil
+        Button("关闭当前文件") { session.closeTabs(at: targets.current, selecting: tab) }
+        Button("关闭非当前文件") { session.closeTabs(at: targets.others, selecting: tab) }
+            .disabled(targets.others.isEmpty)
+        Divider()
+        Button("关闭左边所有") { session.closeTabs(at: targets.left, selecting: tab) }
+            .disabled(targets.left.isEmpty)
+        Button("关闭右边所有") { session.closeTabs(at: targets.right, selecting: tab) }
+            .disabled(targets.right.isEmpty)
+        Button("关闭所有") { session.closeTabs(at: targets.all, selecting: tab) }
+        Divider()
+        // 未标题标签没有文件可定位，置灰；文件已从磁盘消失时由会话给一次明确提示
+        Button("打开文件所在位置") { session.revealInFinder(tab) }
+            .disabled(tab?.fileURL == nil)
     }
 
     /// 右上角设置按钮：打开主窗口左侧设置抽屉

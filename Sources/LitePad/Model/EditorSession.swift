@@ -240,6 +240,43 @@ final class EditorSession: ObservableObject {
                           + "请先对这些标签使用「另存为…」指定文件。")
     }
 
+    /// 标签右键菜单五项关闭的作用集合（KTD17 / R11）：以被右键的那张标签为「当前」一次算清，
+    /// 调用方按集合是否为空决定置灰——置灰判定与作用集合共用这一份计算，
+    /// 不在视图层另算一份，否则会出现「亮着却无事可做」的项
+    struct TabCloseTargets {
+        let current: [Int]
+        let others: [Int]
+        let left: [Int]
+        let right: [Int]
+        let all: [Int]
+    }
+
+    /// 算出某项关闭的作用集合；索引越界时全部为空（调用方据此全部置灰）
+    func tabCloseTargets(at index: Int) -> TabCloseTargets {
+        guard tabs.indices.contains(index) else {
+            return TabCloseTargets(current: [], others: [], left: [], right: [], all: [])
+        }
+        let all = Array(tabs.indices)
+        return TabCloseTargets(current: [index],
+                               others: all.filter { $0 != index },
+                               left: Array(all.prefix(index)),
+                               right: index + 1 < tabs.count ? Array(all.suffix(from: index + 1)) : [],
+                               all: all)
+    }
+
+    /// 在 Finder 中定位标签对应的文件（R28 / KTD18）：走系统的文件定位接口（打开所在文件夹并选中）。
+    /// 路径取标签打开时已解析的地址（KTD16），未标题标签没有文件可定位；
+    /// 文件已从磁盘消失时给一次明确提示——定位随时可能失败，静默无反应会被当成菜单坏了
+    func revealInFinder(_ tab: EditorTab?) {
+        guard let tab, let url = tab.fileURL else { return }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            presentErrorAlert(title: "找不到文件",
+                              message: "“\(url.lastPathComponent)”已不在原位置：\(url.path)")
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     /// 关闭全部标签页：作用集合是当前全部标签，收尾后只剩一个空标签（窗口保留）
     func closeAllTabs() {
         closeTabs(at: Array(tabs.indices))
@@ -248,8 +285,10 @@ final class EditorSession: ObservableObject {
     /// 关闭族的统一收尾路径（KTD17）：传入作用集合的索引快照 → 逐个确认有改动的标签 →
     /// 全部通过后统一关闭；任一取消（含保存被取消、写盘失败）即中止整轮。
     /// 确认期间不动任何标签、也不动恢复区条目，所以取消后的现场与发起前一致；
-    /// 标签右键菜单的五项关闭复用同一入口，各自只是作用集合不同
-    func closeTabs(at indices: [Int]) {
+    /// 标签右键菜单的五项关闭复用同一入口，各自只是作用集合不同。
+    /// `selecting` 是发起这次关闭的那张标签（右键点中的那张）：它还在时收尾后成为活动标签，
+    /// 它已被关掉时沿用上面的索引落位规则
+    func closeTabs(at indices: [Int], selecting tab: EditorTab? = nil) {
         let targets = Array(Set(indices)).sorted().compactMap { tabs.indices.contains($0) ? tabs[$0] : nil }
         guard !targets.isEmpty else { return }
 
@@ -264,6 +303,9 @@ final class EditorSession: ObservableObject {
             }
         }
         finalizeClosedTabs(targets)
+        if let tab, let index = tabs.firstIndex(where: { $0 === tab }) {
+            selectedTabIndex = index
+        }
     }
 
     func saveSelectedTab() {
