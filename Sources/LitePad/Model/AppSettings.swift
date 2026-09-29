@@ -106,8 +106,44 @@ final class AppSettings: ObservableObject {
     @Published var autosaveEnabled: Bool {
         didSet { defaults.set(autosaveEnabled, forKey: "settings.autosave") }
     }
+    /// 显式保存时删除每行行尾的空格与制表符；默认关闭（对 Markdown 硬换行、补丁文件不是保义操作）
+    @Published var trimTrailingWhitespaceOnSave: Bool {
+        didSet { defaults.set(trimTrailingWhitespaceOnSave, forKey: "settings.saveTrimTrailingWhitespace") }
+    }
+    /// 显式保存时补齐文件末尾的一个换行；默认关闭
+    @Published var ensureFinalNewlineOnSave: Bool {
+        didSet { defaults.set(ensureFinalNewlineOnSave, forKey: "settings.saveEnsureFinalNewline") }
+    }
+    /// 保存时清理不作用的语法（语言 id 列表）；默认空，即两项清理对全部语法生效
+    @Published private(set) var saveCleanupExcludedLanguageIDs: [String] {
+        didSet { defaults.set(saveCleanupExcludedLanguageIDs, forKey: "settings.saveCleanupExcludedLanguages") }
+    }
     @Published var externalChangeAction: ExternalChangeAction {
         didSet { defaults.set(externalChangeAction.rawValue, forKey: "settings.externalChange") }
+    }
+
+    /// 两项保存时清理是否有任一项开启（设置页据此决定是否展示按语法排除的口径）
+    var saveCleanupEnabled: Bool {
+        trimTrailingWhitespaceOnSave || ensureFinalNewlineOnSave
+    }
+
+    /// 保存时清理是否作用于该语法：两项都关闭或该语法已被排除时不做。
+    /// 判定只在这里做一次，编辑视图与会话两侧共用同一口径
+    func saveCleanupApplies(to language: LanguageDefinition) -> Bool {
+        saveCleanupEnabled && !isSaveCleanupExcluded(language)
+    }
+
+    func isSaveCleanupExcluded(_ language: LanguageDefinition) -> Bool {
+        saveCleanupExcludedLanguageIDs.contains(language.id)
+    }
+
+    /// 切换某语法的清理排除状态
+    func setSaveCleanupExcluded(_ excluded: Bool, for language: LanguageDefinition) {
+        var ids = saveCleanupExcludedLanguageIDs.filter { $0 != language.id }
+        if excluded {
+            ids.append(language.id)
+        }
+        saveCleanupExcludedLanguageIDs = ids
     }
 
     // MARK: - 外观
@@ -317,6 +353,9 @@ final class AppSettings: ObservableObject {
         restoreSessionOnLaunch = defaults.object(forKey: "settings.restoreSession") as? Bool ?? true
         launchAction = defaults.string(forKey: "settings.launchAction").flatMap(LaunchAction.init(rawValue:)) ?? .newDocument
         autosaveEnabled = defaults.object(forKey: "settings.autosave") as? Bool ?? true
+        trimTrailingWhitespaceOnSave = defaults.object(forKey: "settings.saveTrimTrailingWhitespace") as? Bool ?? false
+        ensureFinalNewlineOnSave = defaults.object(forKey: "settings.saveEnsureFinalNewline") as? Bool ?? false
+        saveCleanupExcludedLanguageIDs = defaults.stringArray(forKey: "settings.saveCleanupExcludedLanguages") ?? []
         externalChangeAction = defaults.string(forKey: "settings.externalChange")
             .flatMap(ExternalChangeAction.init(rawValue:)) ?? .update
 

@@ -59,29 +59,36 @@ enum TextEncoding: String, CaseIterable, Identifiable {
     /// 宽字符编码仅在字节确含 0x00 时才参与尝试（纯 ASCII 文本按宽字符解码只会得到乱码）
     private static let wideCandidates: [TextEncoding] = [.utf16LE, .utf16BE, .utf32LE, .utf32BE]
 
-    /// 把文本编码为当前编码的字节。
+    /// 把文本编码为当前编码的字节；所选编码无法表示正文中的部分字符时返回 nil。
+    /// 失败必须由调用方拒绝写盘：这里不再兜底空数据——那会写出 0 字节文件并标记为已保存。
+    /// BOM 只在正文转换成功后才拼接，避免留下「只有 BOM 的空文件」。
     /// 「Unicode (UTF-16)/(UTF-32)」与 BE 变体带 BOM（BE 按惯例 BE 序 BOM），
     /// 保证 BOM 检测出的编码保存后字节往返一致；显式 LE 变体不带 BOM
-    func encode(_ text: String) -> Data {
+    func encode(_ text: String) -> Data? {
         switch self {
         case .utf8:
-            return Data(text.utf8)
+            return text.data(using: .utf8)
         case .utf8BOM:
-            return Data([0xEF, 0xBB, 0xBF]) + Data(text.utf8)
+            guard let payload = text.data(using: .utf8) else { return nil }
+            return Data([0xEF, 0xBB, 0xBF]) + payload
         case .utf16:
-            return Data([0xFF, 0xFE]) + (text.data(using: .utf16LittleEndian) ?? Data())
+            guard let payload = text.data(using: .utf16LittleEndian) else { return nil }
+            return Data([0xFF, 0xFE]) + payload
         case .utf16BE:
-            return Data([0xFE, 0xFF]) + (text.data(using: .utf16BigEndian) ?? Data())
+            guard let payload = text.data(using: .utf16BigEndian) else { return nil }
+            return Data([0xFE, 0xFF]) + payload
         case .utf16LE:
-            return text.data(using: .utf16LittleEndian) ?? Data()
+            return text.data(using: .utf16LittleEndian)
         case .utf32:
-            return Data([0xFF, 0xFE, 0x00, 0x00]) + (text.data(using: .utf32LittleEndian) ?? Data())
+            guard let payload = text.data(using: .utf32LittleEndian) else { return nil }
+            return Data([0xFF, 0xFE, 0x00, 0x00]) + payload
         case .utf32BE:
-            return Data([0x00, 0x00, 0xFE, 0xFF]) + (text.data(using: .utf32BigEndian) ?? Data())
+            guard let payload = text.data(using: .utf32BigEndian) else { return nil }
+            return Data([0x00, 0x00, 0xFE, 0xFF]) + payload
         case .utf32LE:
-            return text.data(using: .utf32LittleEndian) ?? Data()
+            return text.data(using: .utf32LittleEndian)
         case .gb18030:
-            return text.data(using: TextEncoding.gb18030Encoding) ?? Data()
+            return text.data(using: TextEncoding.gb18030Encoding)
         }
     }
 
@@ -240,5 +247,56 @@ enum LineEnding: String, CaseIterable, Identifiable {
             .replacingOccurrences(of: "\r", with: "\n")
         guard self != .lf else { return unified }
         return unified.replacingOccurrences(of: "\n", with: separator)
+    }
+}
+
+/// 显式保存前的两项可选正文清理：删除行尾空白、补齐末尾换行。
+/// 两项都不是保义操作（Markdown 的行尾双空格是硬换行、补丁文件的空行有意义），
+/// 因此只在显式保存时执行、由设置按语法排除，且由设置控制默认关闭。
+/// 纯逻辑集中在这里：有编辑视图的标签经撤销协议就地清理，没有视图的标签直接改模型文本，
+/// 两条路径必须算出同一份结果，否则写出的字节与模型文本会分歧（KTD5）
+enum SaveCleanup {
+    /// 按设置清理正文；两项都关闭时原样返回
+    static func applying(to text: String,
+                         trimTrailingWhitespace: Bool,
+                         ensureFinalNewline: Bool,
+                         lineEnding: LineEnding) -> String {
+        var result = text
+        if trimTrailingWhitespace {
+            result = trimmingTrailingWhitespace(result)
+        }
+        if ensureFinalNewline {
+            result = ensuringFinalNewline(result, separator: lineEnding.separator)
+        }
+        return result
+    }
+
+    /// 删除每行行尾的空格与制表符，行尾符本身保留；末行（末尾没有行尾符）的空白同样删除。
+    /// 按字符扫描而非正则：\r\n 在 Swift 里是一个字符，逐字符处理天然不拆错行尾
+    static func trimmingTrailingWhitespace(_ text: String) -> String {
+        var result = ""
+        result.reserveCapacity(text.count)
+        // 尚未确认位于行尾的空白：遇到行尾符就丢弃，遇到其他字符说明不在行尾，原样补回
+        var pending = ""
+        for character in text {
+            if character == " " || character == "\t" {
+                pending.append(character)
+            } else if character.isNewline {
+                result.append(character)
+                pending = ""
+            } else {
+                result.append(contentsOf: pending)
+                pending = ""
+                result.append(character)
+            }
+        }
+        // 循环结束时悬挂的空白就是末行的行尾空白
+        return result
+    }
+
+    /// 补齐末尾换行：正文非空且末尾没有换行符时追加一个；已有换行（含多个）时不重复追加
+    static func ensuringFinalNewline(_ text: String, separator: String) -> String {
+        guard let last = text.last, !last.isNewline else { return text }
+        return text + separator
     }
 }

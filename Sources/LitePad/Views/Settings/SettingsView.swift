@@ -697,6 +697,23 @@ private struct GeneralSettingsPane: View {
                     Text("编辑已保存的文件时自动写盘；未标题的文稿仍需手动保存。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    LitePadToggle(title: "保存时删除行尾空白",
+                                  isOn: $settings.trimTrailingWhitespaceOnSave)
+                    LitePadToggle(title: "保存时补齐末尾换行",
+                                  isOn: $settings.ensureFinalNewlineOnSave)
+                    Text("两项只在显式保存（含关闭标签与退出时的确认保存）前执行，自动保存不改动正文。"
+                         + "两项都不是保义操作：删除行尾空白会破坏 Markdown 的行尾双空格（硬换行）与补丁文件的空行，"
+                         + "补齐末尾换行会改写补丁文件这类以末尾换行为语义的格式；"
+                         + "没有内置语法的扩展名（如 Markdown 的 .md）按「纯文本」归类，"
+                         + "需要保留时在下方按语法排除。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 340, alignment: .leading)
+                    // 排除口径只在这两项有任一项开启时才有意义
+                    if settings.saveCleanupEnabled {
+                        SaveCleanupExclusionList()
+                    }
                 }
             }
             SettingsDivider()
@@ -707,6 +724,94 @@ private struct GeneralSettingsPane: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+/// 保存时清理的按语法排除表：勾中的语法在保存时保留原样
+/// （Markdown 的行尾双空格是硬换行、补丁文件的空行有意义，这类格式不能删行尾空白）
+private struct SaveCleanupExclusionList: View {
+    @ObservedObject private var settings = AppSettings.shared
+    @StateObject private var hover = SettingsIndexHoverState()
+
+    var body: some View {
+        let languages = LanguageDefinition.all
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.square")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(InterfaceStyle.accent)
+                Text("不清理这些语法")
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer(minLength: 0)
+                Text("\(settings.saveCleanupExcludedLanguageIDs.count)/\(languages.count)")
+                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                    .foregroundStyle(InterfaceStyle.muted)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
+
+            Rectangle()
+                .fill(InterfaceStyle.border)
+                .frame(height: 1)
+                .padding(.horizontal, 8)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 2) {
+                    ForEach(languages.indices, id: \.self) { index in
+                        let language = languages[index]
+                        Button {
+                            settings.setSaveCleanupExcluded(!settings.isSaveCleanupExcluded(language),
+                                                            for: language)
+                        } label: {
+                            row(language, index: index)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hover.index = $0 ? index : nil }
+                    }
+                }
+                .padding(6)
+            }
+        }
+        .frame(width: 300, height: 150, alignment: .topLeading)
+        .background(FrostedSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous)))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
+        )
+    }
+
+    /// 一行语法：勾选框 + 语法名 + 归属的扩展名（落到该语法的文件都会受影响）
+    private func row(_ language: LanguageDefinition, index: Int) -> some View {
+        let excluded = settings.isSaveCleanupExcluded(language)
+        return HStack(spacing: 7) {
+            Image(systemName: excluded ? "checkmark.square.fill" : "square")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(excluded ? InterfaceStyle.accent : InterfaceStyle.muted)
+            Text(language.displayName)
+                .font(.system(size: 11, weight: excluded ? .medium : .regular))
+                .foregroundStyle(excluded ? .primary : InterfaceStyle.muted)
+                .lineLimit(1)
+            Text(language.extensions.joined(separator: " / "))
+                .font(.system(size: 9))
+                .foregroundStyle(InterfaceStyle.muted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 26)
+        .padding(.horizontal, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(excluded
+                      ? InterfaceStyle.accentSoft
+                      : (hover.index == index ? InterfaceStyle.raised : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(excluded ? InterfaceStyle.accentBorder : Color.clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
     }
 }
 

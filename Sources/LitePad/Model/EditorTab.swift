@@ -138,6 +138,16 @@ enum FindEngine {
     }
 }
 
+/// 保存前清理的执行结果（会话 ⇄ 编辑视图的桥接口径）
+enum SaveCleanupOutcome {
+    /// 已清理或无需清理
+    case done
+    /// 该标签当前没有可用的编辑视图：没有撤销栈可走，由会话改用模型侧清理
+    case noEditor
+    /// 编辑视图拒绝了这次改动，附带中止原因；会话据此中止本次保存并报错
+    case rejected(reason: String)
+}
+
 /// 单个标签页对应的文档状态
 final class EditorTab: ObservableObject, Identifiable {
     let id = UUID()
@@ -256,6 +266,13 @@ final class EditorTab: ObservableObject, Identifiable {
     /// 工具结果写回：由 CodeTextView 安装（撤销协议路径必须在视图层执行）；
     /// useSelection 为真替换当前选区（无选区则插入光标处），为假替换全文
     var writeBackHandler: ((String, Bool) -> Void)?
+    /// 保存前清理回调：由 CodeTextView 安装（撤销协议路径必须在视图层执行），
+    /// 视图拆除时清回 nil。显式保存前调用：清理必须是一次可整体撤销的编辑动作，
+    /// 不得改模型文本再推给视图——那会给撤销栈埋下失效区间（KTD5、KTD14）
+    var saveCleanupHandler: (() -> SaveCleanupOutcome)?
+    /// 本标签的写盘失败是否已提示过：写盘成功时复位，保证自动写盘的连续失败只打扰一次，
+    /// 也避免与状态栏的「未保存」混同
+    var writeFailureReported = false
     /// 查找/替换面板状态；nil 表示面板关闭
     @Published var findState: FindState?
 

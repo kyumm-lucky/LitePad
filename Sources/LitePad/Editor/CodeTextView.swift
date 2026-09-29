@@ -102,6 +102,11 @@ struct CodeTextView: NSViewRepresentable {
             guard let textView else { return }
             writeBack(replacement, useSelection: useSelection, textView: textView, tab: tab)
         }
+        tab.saveCleanupHandler = { [weak coordinator = context.coordinator, weak textView] in
+            // 视图与协调器同生共死：两者任一已释放说明编辑视图已拆除，交给会话走模型侧清理
+            guard let coordinator, let textView else { return .noEditor }
+            return performSaveCleanup(textView: textView, tab: coordinator.tab)
+        }
 
         textView.string = tab.text
         SyntaxHighlighter.highlight(textView: textView, language: tab.language)
@@ -109,6 +114,12 @@ struct CodeTextView: NSViewRepresentable {
         context.coordinator.publishStats(from: textView)
         context.coordinator.applyAppearanceIfNeeded(textView: textView)
         return scrollView
+    }
+
+    /// 视图被拆除（切换标签、窗口关闭）后清掉清理回调：拆除后的视图没有撤销栈可走，
+    /// 此后再保存该标签时由会话直接作用于模型文本
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        coordinator.tab.saveCleanupHandler = nil
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -386,6 +397,39 @@ private func writeBack(_ replacement: String, useSelection: Bool, textView: NSTe
     let inserted = NSRange(location: range.location, length: (replacement as NSString).length)
     textView.selectedRange = inserted
     textView.scrollRangeToVisible(inserted)
+}
+
+/// 保存前按设置就地清理正文（删除行尾空白 / 补齐末尾换行）：整篇作为一次替换走
+/// shouldChangeText 撤销协议，单次 Cmd+Z 可整体回退到清理前，清理结果经 didChangeText
+/// 即时回写模型，写出的字节与模型文本始终一致。是否适用（设置开关、语法排除）
+/// 由会话统一判定，这里只负责执行
+private func performSaveCleanup(textView: NSTextView, tab: EditorTab) -> SaveCleanupOutcome {
+    let settings = AppSettings.shared
+    // 组字期间视图含未上屏的 marked text：就地改写会把它一并提交、模型与匹配区间也会错位；
+    // 拒绝这次清理，由会话中止本次保存并报错（不默默跳过设置项）
+    guard !textView.hasMarkedText() else {
+        return .rejected(reason: "编辑器正在输入法组字，请先结束组字再保存。")
+    }
+
+    let current = textView.string
+    let cleaned = SaveCleanup.applying(to: current,
+                                       trimTrailingWhitespace: settings.trimTrailingWhitespaceOnSave,
+                                       ensureFinalNewline: settings.ensureFinalNewlineOnSave,
+                                       lineEnding: tab.lineEnding)
+    guard cleaned != current else { return .done }
+
+    let selection = textView.selectedRange()
+    // 整篇替换是一条撤销记录；replaceRange 内的 didChangeText 会把新文本同步回模型
+    guard replaceRange(NSRange(location: 0, length: (current as NSString).length),
+                       with: cleaned, textView: textView) else {
+        return .rejected(reason: "编辑器的撤销协议拒绝了这次正文清理。")
+    }
+    // 清理只删行尾空白或在末尾追加换行，选区按原位置收拢即可，不必跳到哪里
+    let length = (cleaned as NSString).length
+    let location = min(selection.location, length)
+    textView.selectedRange = NSRange(location: location,
+                                     length: min(selection.length, length - location))
+    return .done
 }
 
 /// 重建查找高亮（layoutManager 临时背景属性，独立于语法高亮的存储属性层）：
