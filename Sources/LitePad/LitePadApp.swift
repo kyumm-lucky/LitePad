@@ -17,7 +17,10 @@ struct LitePadApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("LitePad", id: mainWindowID) {
+        // 必须用单窗口的 Window 场景：WindowGroup 在收到「打开文稿」Apple Event 时
+        // 会自己再开一个窗口（与委托里的分页处理叠加就成了重复窗口），而本应用是
+        // 「一个窗口 + 多个标签页」的模型，文件一律进标签，不开新窗口
+        Window("LitePad", id: mainWindowID) {
             ContentView()
                 .environmentObject(session)
                 .frame(minWidth: 760, minHeight: 480)
@@ -106,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// 窗口全关掉后点 Dock 图标（或 Dock 的「重新打开」）会走到这里。实测本工程的窗口关闭后
-    /// 即被释放，SwiftUI 不会自己把 WindowGroup 的窗口建回来（同样结构的最小 App 会），
+    /// 即被释放，SwiftUI 不会自己把窗口建回来（同样结构的最小 App 会），
     /// 所以必须显式重建——否则图标点下去毫无反应，未保存的内容也就再也回不到屏幕上。
     /// 窗口还在（`Cmd+H` 隐藏、最小化）时 AppKit 自己会把它恢复到前台，这里不插手。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -121,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// 主窗口的 WindowGroup 标识（重建窗口时按它取）
+/// 主窗口的场景标识（重建窗口时按它取）
 private let mainWindowID = "main"
 
 /// 取当前窗口的 openWindow 动作交给应用委托：环境值只能在视图里读，读到的动作转交出去，
