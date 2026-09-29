@@ -270,6 +270,14 @@ final class EditorTab: ObservableObject, Identifiable {
     /// 视图拆除时清回 nil。显式保存前调用：清理必须是一次可整体撤销的编辑动作，
     /// 不得改模型文本再推给视图——那会给撤销栈埋下失效区间（KTD5、KTD14）
     var saveCleanupHandler: (() -> SaveCleanupOutcome)?
+    /// 编辑器是否处于输入法组字（marked text）状态：由 CodeTextView 安装，只读查询；
+    /// 视图不存在（已拆除或尚未建立）时为 nil，按「不在组字」处理。
+    /// 重读这类整串改写必须在组字期间拒绝——组字结束时视图会把自身内容推回模型，
+    /// 刚重读的正确正文会被组字前的旧内容覆盖，并在一秒后被自动写盘写回文件
+    var compositionStateProvider: (() -> Bool)?
+    /// 整串正文重读的落点：由 CodeTextView 安装（整串替换必须在视图层走撤销协议，KTD14），
+    /// 返回是否完成替换。视图不存在时为 nil，会话改走模型侧赋值——那时没有撤销栈要清
+    var reloadTextHandler: ((String) -> Bool)?
     /// 本标签的写盘失败是否已提示过：写盘成功时复位，保证自动写盘的连续失败只打扰一次，
     /// 也避免与状态栏的「未保存」混同
     var writeFailureReported = false

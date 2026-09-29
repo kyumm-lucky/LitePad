@@ -185,6 +185,20 @@ struct ContentView: View {
                       selectedIndex: session.activeTool.flatMap { TextToolKind.allCases.firstIndex(of: $0) },
                       commit: { index in session.openTool(TextToolKind.allCases[index]) })
         }
+        // 编码面板多一条底部动作：上面的选项只改保存编码，这一项才真的按它重读磁盘正文（R5）。
+        // 未标题标签没有文件可读，动作置灰
+        let action: PanelAction? = kind == .encoding
+            ? PanelAction(title: "按此编码重新载入",
+                          detail: "选项只改保存编码，此项按它重读磁盘正文",
+                          isEnabled: tab.fileURL != nil,
+                          perform: {
+                              // 与选项行同一收尾：动作发出后立刻收起面板，
+                              // 重读的三键确认与失败报错都在面板之外发生
+                              session.hoveredPanelIndex = nil
+                              session.expandedMenu = nil
+                              session.reloadSelectedTab(with: tab.encoding)
+                          })
+            : nil
         return OptionPanel(title: option.title,
                            options: option.options,
                            selectedIndex: option.selectedIndex,
@@ -199,7 +213,8 @@ struct ContentView: View {
                            onHover: { session.hoveredPanelIndex = $0 },
                            optionSymbols: kind == .tools
                                ? TextToolKind.allCases.map(\.symbolName)
-                               : nil)
+                               : nil,
+                           action: action)
     }
 
     private var emptyView: some View {

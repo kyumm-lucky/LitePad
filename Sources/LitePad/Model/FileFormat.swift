@@ -92,6 +92,46 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 字节往返校验：解码出的正文按同一编码再编码，必须与磁盘字节完全一致。
+    /// 不一致说明「按该编码建立干净基准 → 下一次写盘」会把文件改写成另一副样子（KTD4）：
+    /// 宽容解码兜底出的替换字符、认错编码却仍能读通的字节都会在这里被拦下
+    func roundTrips(_ text: String, with data: Data) -> Bool {
+        encode(text) == data
+    }
+
+    /// 按指定编码严格解码磁盘字节：不做 BOM 嗅探、不参考文稿内编码声明、不做宽容兜底——
+    /// 解码失败就是失败，不退回 UTF-8 容错。带 BOM 的变体只按该编码自身的写出口径剥掉 BOM
+    /// （与 `encode` 配对），使字节往返校验对这类文件同样成立。
+    /// 供「按此编码重新载入」使用；「打开」路径必须永远能打开文件，继续走宽容的 `decode`
+    func decodeStrictly(_ data: Data) -> String? {
+        switch self {
+        case .utf8:
+            return String(data: data, encoding: .utf8)
+        case .utf8BOM:
+            return String(data: strippingBOM([0xEF, 0xBB, 0xBF], from: data), encoding: .utf8)
+        case .utf16:
+            // 「Unicode (UTF-16)」按 LE + BOM 写入，读侧也只认这一种组合
+            return String(data: strippingBOM([0xFF, 0xFE], from: data), encoding: .utf16LittleEndian)
+        case .utf16BE:
+            return String(data: strippingBOM([0xFE, 0xFF], from: data), encoding: .utf16BigEndian)
+        case .utf16LE:
+            return String(data: data, encoding: .utf16LittleEndian)
+        case .utf32:
+            return String(data: strippingBOM([0xFF, 0xFE, 0x00, 0x00], from: data), encoding: .utf32LittleEndian)
+        case .utf32BE:
+            return String(data: strippingBOM([0x00, 0x00, 0xFE, 0xFF], from: data), encoding: .utf32BigEndian)
+        case .utf32LE:
+            return String(data: data, encoding: .utf32LittleEndian)
+        case .gb18030:
+            return String(data: data, encoding: TextEncoding.gb18030Encoding)
+        }
+    }
+
+    /// 剥掉数据开头的指定 BOM；没有则原样返回
+    private func strippingBOM(_ bom: [UInt8], from data: Data) -> Data {
+        data.starts(with: bom) ? data.dropFirst(bom.count) : data
+    }
+
     /// 解码文件数据并给出判定编码：优先按 BOM 识别（UTF-32LE 的 BOM 以 UTF-16LE 的 BOM 开头，须先判 UTF-32），
     /// BOM 检出映射到带 BOM 的编码变体以保证保存字节往返一致；无 BOM 时先做宽字符端序探测，
     /// 再按用户配置的优先级尝试解码（默认 UTF-8 → GB18030），最后按 UTF-8 容错解码。

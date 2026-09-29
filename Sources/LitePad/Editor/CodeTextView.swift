@@ -109,6 +109,15 @@ struct CodeTextView: NSViewRepresentable {
             guard let coordinator, let textView else { return .noEditor }
             return performSaveCleanup(textView: textView, tab: coordinator.tab)
         }
+        // 组字状态只读查询：会话据此在组字期间拒绝重读这类整串改写
+        tab.compositionStateProvider = { [weak textView] in
+            textView?.hasMarkedText() ?? false
+        }
+        // 重读落点：整串替换必须在视图层走撤销协议（KTD14），会话只负责读盘与校验
+        tab.reloadTextHandler = { [weak coordinator = context.coordinator] newText in
+            guard let coordinator else { return false }
+            return coordinator.reloadWholeText(newText)
+        }
 
         // 文件拖放：编辑区由文本视图在 AppKit 层接管（SwiftUI 的投放目标收不到这里的投放），
         // 拖入 / 离开驱动接收提示，投放把地址交给会话的统一打开入口
@@ -128,10 +137,15 @@ struct CodeTextView: NSViewRepresentable {
         return scrollView
     }
 
-    /// 视图被拆除（切换标签、窗口关闭）后清掉清理回调：拆除后的视图没有撤销栈可走，
-    /// 此后再保存该标签时由会话直接作用于模型文本
+    /// 视图被拆除（切换标签、窗口关闭）后清掉清理回调与重读落点：拆除后的视图没有撤销栈可走，
+    /// 此后再保存该标签时由会话直接作用于模型文本，重读同样落到模型侧
     static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        // 撤销管理器是窗口级的、所有标签共用：切走时清掉本标签登记的动作，
+        // 否则在下一张标签里按撤销会落到已经拆除的视图上（KTD14 说的失效区间）
+        (scrollView.documentView as? NSTextView)?.undoManager?.removeAllActions()
         coordinator.tab.saveCleanupHandler = nil
+        coordinator.tab.compositionStateProvider = nil
+        coordinator.tab.reloadTextHandler = nil
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -143,6 +157,9 @@ struct CodeTextView: NSViewRepresentable {
         let languageChanged = context.coordinator.highlightedLanguage != tab.language
 
         if textView.string != tab.text {
+            // 整串赋值清不掉撤销管理器里已登记的动作，之后再按撤销会在失效区间上抛异常并终止进程（KTD14）；
+            // 这条赋值是外部改动重载与模型侧改写的落点，赋值前先清空撤销栈是唯一可行的口径
+            textView.undoManager?.removeAllActions()
             let selection = textView.selectedRanges.compactMap { $0 as? NSRange }
             textView.string = tab.text
             let maxLoc = (tab.text as NSString).length
@@ -316,6 +333,33 @@ struct CodeTextView: NSViewRepresentable {
         func publishStats(from textView: NSTextView) {
             tab.updateStats(DocumentStats.compute(text: textView.string,
                                                   caretOffset: textView.selectedRange().location))
+        }
+
+        /// 重读落点：把按编码重读得到的整串正文换进编辑视图。整串替换前先清空撤销栈（KTD14）——
+        /// 栈里旧动作记的区间在整串替换后失效，之后按撤销会在失效区间上抛异常；替换本身仍走
+        /// shouldChangeText 撤销协议，替换后的 didChangeText 会把新正文同步回模型并重算查找匹配
+        /// 区间（KTD15），选区按原位置收拢。返回是否完成替换（组字中或撤销协议拒绝时 false，会话据此中止重读）
+        func reloadWholeText(_ newText: String) -> Bool {
+            guard let textView else { return false }
+            // 组字期间视图含未上屏的 marked text：替换会把它一并提交、模型与匹配区间也会错位；
+            // 拒绝本次替换（会话在发起重读前已按同一口径拦过一次，这里只兜底）
+            guard !textView.hasMarkedText() else {
+                NSSound.beep()
+                return false
+            }
+            guard newText != textView.string else { return true }
+
+            let selection = textView.selectedRange()
+            textView.undoManager?.removeAllActions()
+            guard replaceRange(NSRange(location: 0, length: (textView.string as NSString).length),
+                               with: newText, textView: textView, tab: tab) else { return false }
+            let length = (newText as NSString).length
+            let location = min(selection.location, length)
+            textView.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
+            // 整串替换会清空 layoutManager 的临时属性（查找高亮画在那一层）：重置高亮守卫，
+            // 让 updateNSView 按新状态重建，与模型侧赋值那条路同一口径（KTD15）
+            appliedFindState = nil
+            return true
         }
     }
 }
