@@ -4,6 +4,7 @@ import AppKit
 @main
 struct LitePadApp: App {
     @StateObject private var session = EditorSession()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
         // 以 `swift run` 裸进程方式运行时也能获得常规 App 形态（Dock 图标、菜单栏）
@@ -20,6 +21,9 @@ struct LitePadApp: App {
             ContentView()
                 .environmentObject(session)
                 .frame(minWidth: 760, minHeight: 480)
+                // 退出保护需要会话：委托对象由 SwiftUI 在 App 构造期创建，早于 @StateObject
+                // 的会话，所以在这里补上引用（首帧之前没有脏标签，晚接不影响保护）
+                .onAppear { appDelegate.session = session }
         }
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -56,5 +60,19 @@ struct LitePadApp: App {
                 }
             }
         }
+    }
+}
+
+/// 应用级委托：目前只负责退出前的未保存保护。`Cmd+Q`、菜单「退出」、Dock 菜单退出、
+/// 注销 / 关机都会经由 applicationShouldTerminate，在这里统一交给会话逐个确认脏标签
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// 由 LitePadApp 在根视图出现时注入（见那里的说明）
+    weak var session: EditorSession?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // 会话尚未注入时是启动早期，此时不可能有未保存内容
+        guard let session else { return .terminateNow }
+        return session.confirmTermination() ? .terminateNow : .terminateCancel
     }
 }

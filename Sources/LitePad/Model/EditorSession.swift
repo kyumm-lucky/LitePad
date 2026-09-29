@@ -224,6 +224,22 @@ final class EditorSession: ObservableObject {
         persistSession()
     }
 
+    /// 退出前的未保存保护：逐个确认有更改的标签，任一标签被取消（含保存面板被取消、
+    /// 写盘失败）即中止退出。与 closeTab 共用同一套确认与保存流程，保证两个入口语义一致
+    func confirmTermination() -> Bool {
+        for tab in tabs where tab.isDirty {
+            switch confirmSave(of: tab) {
+            case .save:
+                guard save(tab: tab) else { return false } // 保存被取消 / 失败则不退出
+            case .discard:
+                break
+            case .cancel:
+                return false
+            }
+        }
+        return true
+    }
+
     /// 把当前文件标签写入 UserDefaults，供下次启动恢复
     func persistSession() {
         UserDefaults.standard.set(tabs.compactMap(\.fileURL).map(\.absoluteString),
