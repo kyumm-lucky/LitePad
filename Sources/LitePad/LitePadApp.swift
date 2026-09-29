@@ -76,6 +76,15 @@ struct LitePadApp: App {
                 // 不用框架自带的「全部关闭」：那一个关的是窗口，这里关的是全部标签
                 Button("关闭全部") { session.closeAllTabs() }
             }
+            // 打印（R22）：窗口场景不会自带打印项，用替换方式把「打印…」装进「文件」菜单；
+            // 打印面板由 PrintController 以窗口内的表单呈现
+            CommandGroup(replacing: .printItem) {
+                Button("打印…") {
+                    guard let tab = session.selectedTab else { return }
+                    PrintController.shared.printDocument(tab.text, jobName: tab.displayName)
+                }
+                .keyboardShortcut("p", modifiers: .command)
+            }
             CommandGroup(replacing: .appSettings) {
                 Button("设置…") { session.toggleSettings() }
                     .keyboardShortcut(",", modifiers: .command)
