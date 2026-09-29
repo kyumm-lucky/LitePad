@@ -27,6 +27,11 @@ enum RecentFiles {
         return list
     }
 
+    /// 清空全部记录（R12）；下次启动也不再有旧条目
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
     private static func save(_ list: [URL]) {
         UserDefaults.standard.set(list.map(\.absoluteString), forKey: key)
     }

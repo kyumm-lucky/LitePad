@@ -39,12 +39,17 @@ struct LitePadApp: App {
                     ForEach(session.recentFiles, id: \.absoluteString) { url in
                         Button(url.lastPathComponent) { session.openRecent(url) }
                     }
+                    if !session.recentFiles.isEmpty {
+                        Divider()
+                    }
+                    Button("清空最近") { session.clearRecentFiles() }
+                        .disabled(session.recentFiles.isEmpty)
                 }
-                .disabled(session.recentFiles.isEmpty)
                 Button("保存") { session.saveSelectedTab() }
                     .keyboardShortcut("s", modifiers: .command)
                 Button("另存为…") { session.saveAsSelectedTab() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("保存全部") { session.saveAll() }
                 Button("查找…") { session.toggleFind() }
                     .keyboardShortcut("f", modifiers: .command)
                 Button("跳转到行…") { session.goToLine() }
@@ -52,6 +57,8 @@ struct LitePadApp: App {
                 Divider()
                 Button("关闭标签页") { session.closeSelectedTab() }
                     .keyboardShortcut("w", modifiers: .command)
+                // 不用框架自带的「全部关闭」：那一个关的是窗口，这里关的是全部标签
+                Button("关闭全部") { session.closeAllTabs() }
             }
             CommandGroup(replacing: .appSettings) {
                 Button("设置…") { session.toggleSettings() }

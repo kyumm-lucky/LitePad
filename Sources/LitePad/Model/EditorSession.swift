@@ -91,7 +91,9 @@ final class EditorSession: ObservableObject {
 
     /// 打开的完整路径：会话恢复不记录最近列表、不弹错误框
     func open(url: URL, recordsRecent: Bool, alertOnError: Bool) {
-        if let index = tabs.firstIndex(where: { $0.fileURL?.standardizedFileURL == url.standardizedFileURL }) {
+        // 标签的文件取解析后的地址：此后读写都对着真实文件，不会经链接把链接本身写掉
+        let target = Self.fileIdentity(url)
+        if let index = tabIndex(holdingFileAt: target) {
             selectedTabIndex = index
             if recordsRecent {
                 recordRecent(url)
@@ -99,14 +101,14 @@ final class EditorSession: ObservableObject {
             return
         }
         do {
-            let data = try Data(contentsOf: url)
+            let data = try Data(contentsOf: target)
             let settings = AppSettings.shared
             let (content, encoding) = TextEncoding.decode(
                 data,
                 priority: settings.encodingPriority,
                 respectCharsetDeclaration: settings.respectCharsetDeclaration)
             let lineEnding = LineEnding.detect(in: content)
-            addTab(EditorTab(fileURL: url, text: content,
+            addTab(EditorTab(fileURL: target, text: content,
                              encoding: encoding, lineEnding: lineEnding))
             if recordsRecent {
                 recordRecent(url)
@@ -128,6 +130,73 @@ final class EditorSession: ObservableObject {
             return
         }
         open(url: url)
+    }
+
+    /// 清空最近文件列表；列表清空后「打开最近」里只剩置灰的清空项
+    func clearRecentFiles() {
+        RecentFiles.clear()
+        recentFiles = []
+    }
+
+    // MARK: - 文件身份（KTD16）
+
+    /// 文件身份的统一判定：规范化路径并把符号链接解析到真实文件。
+    /// 解析后的地址即标签的文件——经链接写盘会把链接本身替换成普通文件；
+    /// 打开、另存为与后续的拖入都必须经这一处取身份，不做只比字符串的第二套判断，
+    /// 否则同一个文件会被两张标签持有，其中一个还会被外部改动检测静默重载
+    private static func fileIdentity(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    /// 该路径已由哪张标签持有；nil 表示尚无标签持有（KTD16：一个已解析路径只对应一个标签）
+    private func tabIndex(holdingFileAt url: URL) -> Int? {
+        let identity = Self.fileIdentity(url)
+        return tabs.firstIndex { tab in
+            guard let bound = tab.fileURL else { return false }
+            return Self.fileIdentity(bound) == identity
+        }
+    }
+
+    // MARK: - 批量与收尾
+
+    /// 保存全部（R10）：一次写盘所有有改动且已绑定文件的标签。
+    /// 未标题的脏标签没有可写的文件，跳过并在末尾汇总提示一次；
+    /// 任一次写盘失败或用户取消即停止，后面的标签保持原样
+    func saveAll() {
+        let skippedUntitled = tabs.filter { $0.isDirty && $0.fileURL == nil }.count
+        for tab in tabs where tab.isDirty && tab.fileURL != nil {
+            guard save(tab: tab) else { return }
+        }
+        guard skippedUntitled > 0 else { return }
+        presentNotice(title: "已跳过未标题标签",
+                      message: "有 \(skippedUntitled) 个未标题标签存在未保存的改动，它们还没有对应的文件。"
+                          + "请先对这些标签使用「另存为…」指定文件。")
+    }
+
+    /// 关闭全部标签页：作用集合是当前全部标签，收尾后只剩一个空标签（窗口保留）
+    func closeAllTabs() {
+        closeTabs(at: Array(tabs.indices))
+    }
+
+    /// 关闭族的统一收尾路径（KTD17）：传入作用集合的索引快照 → 逐个确认有改动的标签 →
+    /// 全部通过后统一关闭；任一取消（含保存被取消、写盘失败）即中止整轮。
+    /// 确认期间不动任何标签、也不动恢复区条目，所以取消后的现场与发起前一致；
+    /// 标签右键菜单的五项关闭复用同一入口，各自只是作用集合不同
+    func closeTabs(at indices: [Int]) {
+        let targets = Array(Set(indices)).sorted().compactMap { tabs.indices.contains($0) ? tabs[$0] : nil }
+        guard !targets.isEmpty else { return }
+
+        for tab in targets where tab.isDirty {
+            switch confirmSave(of: tab) {
+            case .save:
+                guard save(tab: tab) else { return } // 保存被取消 / 失败：整轮中止
+            case .discard:
+                break
+            case .cancel:
+                return
+            }
+        }
+        finalizeClosedTabs(targets)
     }
 
     func saveSelectedTab() {
@@ -157,8 +226,17 @@ final class EditorSession: ObservableObject {
         panel.nameFieldStringValue = tab.fileURL?.lastPathComponent ?? "未命名.txt"
         panel.message = "选择保存位置"
         guard panel.runModal() == .OK, let url = panel.url else { return false }
+        // 绑定前按 KTD16 的统一规则查重：目标路径已由别的标签持有时中止，
+        // 既不改本标签的绑定，也不动对方标签
+        let target = Self.fileIdentity(url)
+        if let holder = tabIndex(holdingFileAt: target), tabs[holder] !== tab {
+            presentErrorAlert(title: "无法保存到该文件",
+                              message: "“\(target.lastPathComponent)”已由标签“\(tabs[holder].displayName)”打开。"
+                                  + "请换一个文件名，或先关闭那个标签。")
+            return false
+        }
         // 清理放在面板确认之后：取消另存为不该改动正文
-        let ok = finishSave(tab: tab, to: url)
+        let ok = finishSave(tab: tab, to: target)
         if ok {
             recordRecent(url)
         }
@@ -271,31 +349,36 @@ final class EditorSession: ObservableObject {
     }
 
     func closeTab(at index: Int) {
-        guard tabs.indices.contains(index) else { return }
-        let tab = tabs[index]
+        closeTabs(at: [index])
+    }
 
-        if tab.isDirty {
-            switch confirmSave(of: tab) {
-            case .save:
-                guard save(tab: tab) else { return } // 保存被取消则不关闭
-            case .discard:
-                break
-            case .cancel:
-                return
-            }
+    /// 关闭族的批量终态动作：只有这里真正移除标签——先摘掉自动保存订阅，再统一移除，
+    /// 最后沿用既有 closeTab 的索引规则落位活动标签；标签集合不会被清空，始终保留一个空标签。
+    /// 恢复区条目的删除是批量终态动作，U6 接在这一处，不进入逐个确认的过程
+    private func finalizeClosedTabs(_ closed: [EditorTab]) {
+        guard !closed.isEmpty else { return }
+        let closing = Set(closed.map(\.id))
+        for id in closing {
+            autosaveCancellables.removeValue(forKey: id)
         }
 
-        autosaveCancellables.removeValue(forKey: tab.id)
-        tabs.remove(at: index)
+        let previous = tabs
+        let previousSelection = selectedTabIndex
+        tabs.removeAll { closing.contains($0.id) }
+
         if tabs.isEmpty {
             let empty = EditorTab() // 始终保留一个空标签，与 Notepad++ 行为一致
             tabs = [empty]
             selectedTabIndex = 0
             installAutosave(for: empty)
-        } else if index < selectedTabIndex {
-            selectedTabIndex -= 1
+        } else if previous.indices.contains(previousSelection),
+                  let kept = tabs.firstIndex(where: { $0 === previous[previousSelection] }) {
+            // 活动标签没被关掉：让它继续是活动标签（与 closeTab 关非活动标签时的落位一致）
+            selectedTabIndex = kept
         } else {
-            selectedTabIndex = min(selectedTabIndex, tabs.count - 1)
+            // 活动标签被关掉：落到它原位置右侧的第一张存留标签，右侧没有则落到最后一张
+            let survivingBefore = previous.prefix(previousSelection).filter { !closing.contains($0.id) }.count
+            selectedTabIndex = min(survivingBefore, tabs.count - 1)
         }
         persistSession()
     }
@@ -501,6 +584,15 @@ final class EditorSession: ObservableObject {
         alert.messageText = title
         alert.informativeText = message
         alert.alertStyle = .critical
+        alert.runModal()
+    }
+
+    /// 提示性说明：只为把一批操作的结果交代清楚（如保存全部跳过了哪些标签），不带错误着色
+    private func presentNotice(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
         alert.runModal()
     }
 }
