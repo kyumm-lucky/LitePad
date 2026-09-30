@@ -77,51 +77,51 @@ struct CodeTextView: NSViewRepresentable {
         textView.delegate = context.coordinator
         context.coordinator.textView = textView
 
-        tab.goToLineHandler = { [weak textView] line in
-            goToLine(line, in: textView)
-        }
-        tab.findNavigationHandler = { [weak coordinator = context.coordinator] index in
-            guard let coordinator,
-                  let textView = coordinator.textView,
-                  let state = coordinator.tab.findState,
-                  state.matches.indices.contains(index) else { return }
-            textView.selectedRange = state.matches[index]
-            textView.scrollRangeToVisible(state.matches[index])
-        }
-        tab.replaceHandler = { [weak coordinator = context.coordinator] replaceAll in
-            guard let coordinator, let textView = coordinator.textView else { return }
-            performReplace(textView: textView, tab: coordinator.tab, all: replaceAll)
-        }
-        tab.textSourceProvider = { [weak textView, weak tab] in
-            guard let textView else { return (selection: "", fullText: tab?.text ?? "") }
-            let nsText = textView.string as NSString
-            let range = NSIntersectionRange(textView.selectedRange(),
-                                            NSRange(location: 0, length: nsText.length))
-            return (selection: range.length > 0 ? nsText.substring(with: range) : "",
-                    fullText: textView.string)
-        }
-        tab.writeBackHandler = { [weak textView, weak tab] replacement, useSelection in
-            guard let textView else { return }
-            writeBack(replacement, useSelection: useSelection, textView: textView, tab: tab)
-        }
-        tab.lineOperationHandler = { [weak textView, weak tab] kind in
-            guard let textView else { return }
-            applyLineOperation(kind, textView: textView, tab: tab)
-        }
-        tab.saveCleanupHandler = { [weak coordinator = context.coordinator, weak textView] in
-            // 视图与协调器同生共死：两者任一已释放说明编辑视图已拆除，交给会话走模型侧清理
-            guard let coordinator, let textView else { return .noEditor }
-            return performSaveCleanup(textView: textView, tab: coordinator.tab)
-        }
-        // 组字状态只读查询：会话据此在组字期间拒绝重读这类整串改写
-        tab.compositionStateProvider = { [weak textView] in
-            textView?.hasMarkedText() ?? false
-        }
-        // 重读落点：整串替换必须在视图层走撤销协议（KTD14），会话只负责读盘与校验
-        tab.reloadTextHandler = { [weak coordinator = context.coordinator] newText in
-            guard let coordinator else { return false }
-            return coordinator.reloadWholeText(newText)
-        }
+        tab.bridge = EditorBridge(
+            goToLine: { [weak textView] line in
+                goToLine(line, in: textView)
+            },
+            findNavigation: { [weak coordinator = context.coordinator] index in
+                guard let coordinator,
+                      let textView = coordinator.textView,
+                      let state = coordinator.tab.findState,
+                      state.matches.indices.contains(index) else { return }
+                textView.selectedRange = state.matches[index]
+                textView.scrollRangeToVisible(state.matches[index])
+            },
+            replace: { [weak coordinator = context.coordinator] replaceAll in
+                guard let coordinator, let textView = coordinator.textView else { return }
+                performReplace(textView: textView, tab: coordinator.tab, all: replaceAll)
+            },
+            textSource: { [weak textView, weak tab] in
+                guard let textView else { return (selection: "", fullText: tab?.text ?? "") }
+                let nsText = textView.string as NSString
+                let range = NSIntersectionRange(textView.selectedRange(),
+                                                NSRange(location: 0, length: nsText.length))
+                return (selection: range.length > 0 ? nsText.substring(with: range) : "",
+                        fullText: textView.string)
+            },
+            writeBack: { [weak textView, weak tab] replacement, useSelection in
+                guard let textView else { return }
+                writeBack(replacement, useSelection: useSelection, textView: textView, tab: tab)
+            },
+            lineOperation: { [weak textView, weak tab] kind in
+                guard let textView else { return }
+                applyLineOperation(kind, textView: textView, tab: tab)
+            },
+            saveCleanup: { [weak coordinator = context.coordinator, weak textView] in
+                // 视图与协调器同生共死：两者任一已释放说明编辑视图已拆除，交给会话走模型侧清理
+                guard let coordinator, let textView else { return .noEditor }
+                return performSaveCleanup(textView: textView, tab: coordinator.tab)
+            },
+            isComposing: { [weak textView] in
+                textView?.hasMarkedText() ?? false
+            },
+            reloadText: { [weak coordinator = context.coordinator] newText in
+                guard let coordinator else { return false }
+                return coordinator.reloadWholeText(newText)
+            }
+        )
 
         // 文件拖放：编辑区由文本视图在 AppKit 层接管（SwiftUI 的投放目标收不到这里的投放），
         // 拖入 / 离开驱动接收提示，投放把地址交给会话的统一打开入口
@@ -155,16 +155,13 @@ struct CodeTextView: NSViewRepresentable {
         return scrollView
     }
 
-    /// 视图被拆除（切换标签、窗口关闭）后清掉清理回调与重读落点：拆除后的视图没有撤销栈可走，
+    /// 视图被拆除（切换标签、窗口关闭）后整份清掉回调包：拆除后的视图没有撤销栈可走，
     /// 此后再保存该标签时由会话直接作用于模型文本，重读同样落到模型侧
     static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
         // 撤销管理器是窗口级的、所有标签共用：切走时清掉本标签登记的动作，
         // 否则在下一张标签里按撤销会落到已经拆除的视图上（KTD14 说的失效区间）
         (scrollView.documentView as? NSTextView)?.undoManager?.removeAllActions()
-        coordinator.tab.saveCleanupHandler = nil
-        coordinator.tab.compositionStateProvider = nil
-        coordinator.tab.reloadTextHandler = nil
-        coordinator.tab.lineOperationHandler = nil
+        coordinator.tab.bridge = EditorBridge()
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -199,7 +196,7 @@ struct CodeTextView: NSViewRepresentable {
             SyntaxHighlighter.highlight(textView: textView, language: tab.language)
         }
 
-        // 高亮（查找匹配 + 选中词出现）有变化时重建；选区/滚动只由 findNavigationHandler 驱动，
+        // 高亮（查找匹配 + 选中词出现）有变化时重建；选区/滚动只由查找定位回调驱动，
         // 避免用户输入时被抢走光标
         context.coordinator.applyHighlightsIfNeeded(textView: textView)
     }
@@ -399,6 +396,12 @@ struct CodeTextView: NSViewRepresentable {
             applyHighlights(textView: textView, old: old, new: snapshot)
         }
 
+        /// 整串替换清空了 layoutManager 临时属性之后调用：已应用快照作废，
+        /// 让随后的选区回调 / updateNSView 按新状态重建
+        fileprivate func invalidateAppliedHighlight() {
+            appliedHighlight = HighlightSnapshot()
+        }
+
         /// 外观变化（系统深浅切换 / 外观模式切换）后的落点：语法色是写进文本存储的具体色值，
         /// 装饰层与行号栏的取色也都是按外观解析的，三者都要按新外观重取（KTD6）。
         /// 外观配置本身没有变化，走不到 applyAppearanceIfNeeded，必须由外观变化钩子显式重跑。
@@ -452,9 +455,6 @@ struct CodeTextView: NSViewRepresentable {
             let length = (newText as NSString).length
             let location = min(selection.location, length)
             textView.selectedRange = NSRange(location: location, length: min(selection.length, length - location))
-            // 整串替换会清空 layoutManager 的临时属性（高亮画在那一层）：重置高亮快照，
-            // 让 updateNSView 按新状态重建，与模型侧赋值那条路同一口径（KTD15）
-            appliedHighlight = HighlightSnapshot()
             return true
         }
     }
@@ -521,12 +521,21 @@ private func performReplace(textView: NSTextView, tab: EditorTab, all: Bool) {
 @discardableResult
 private func replaceRange(_ range: NSRange, with newText: String, textView: NSTextView,
                           tab: EditorTab? = nil) -> Bool {
+    // 整串替换会清空 layoutManager 的临时属性（高亮画在那一层）。保存清理与行操作的
+    // 整篇分支也会走这里——只改文末换行时匹配区间不变，若不作废已应用快照，
+    // 查找高亮会停在不可见状态直到下一次选区变化（KTD15）
+    let replacingEntireDocument = range.location == 0
+        && range.length == (textView.string as NSString).length
     guard textView.shouldChangeText(in: range, replacementString: newText),
           let storage = textView.textStorage else { return false }
     storage.replaceCharacters(in: range, with: NSAttributedString(string: newText))
     textView.didChangeText()
+    if replacingEntireDocument, let coordinator = textView.delegate as? CodeTextView.Coordinator {
+        coordinator.invalidateAppliedHighlight()
+        coordinator.applyHighlightsIfNeeded(textView: textView)
+    }
     if let tab, let state = tab.findState, state.matches.indices.contains(state.current) {
-        tab.findNavigationHandler?(state.current)
+        tab.bridge.findNavigation?(state.current)
     }
     return true
 }

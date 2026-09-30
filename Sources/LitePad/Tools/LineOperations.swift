@@ -161,10 +161,11 @@ enum LineOperations {
         return result
     }
 
-    /// 去掉行尾空白（空格、制表符等；换行已在拆行时单独拆走，不在这里处理）
+    /// 去掉行尾空白（空格与制表符；换行已在拆行时单独拆走，不在这里处理）。
+    /// 口径与保存时清理同一份（`SaveCleanup.isTrailingWhitespace`），不删不换行空格 / 全角空格
     private static func trimTrailingWhitespace(_ line: String) -> String {
         var end = line.endIndex
-        while end > line.startIndex, line[line.index(before: end)].isWhitespace {
+        while end > line.startIndex, SaveCleanup.isTrailingWhitespace(line[line.index(before: end)]) {
             end = line.index(before: end)
         }
         return String(line[line.startIndex..<end])

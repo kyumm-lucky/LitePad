@@ -33,8 +33,8 @@ struct FindPanelView: View {
                     .frame(width: 150)
                     // 与查找框同口径：回车继续跳到下一个匹配，不用先点回查找框
                     .onSubmit { tab.navigateMatch(1) }
-                panelButton("arrow.uturn.backward", "替换当前匹配") { tab.replaceHandler?(false) }
-                panelButton("arrow.2.squarepath", "全部替换") { tab.replaceHandler?(true) }
+                panelButton("arrow.uturn.backward", "替换当前匹配") { tab.bridge.replace?(false) }
+                panelButton("arrow.2.squarepath", "全部替换") { tab.bridge.replace?(true) }
             }
             HStack(spacing: 12) {
                 LitePadToggle(title: "正则", isOn: optionBinding(\.useRegex))

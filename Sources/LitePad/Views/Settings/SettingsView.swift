@@ -703,6 +703,8 @@ private struct GeneralSettingsPane: View {
                     LitePadToggle(title: "保存时补齐末尾换行",
                                   isOn: $settings.ensureFinalNewlineOnSave)
                     Text("两项只在显式保存（含关闭标签与退出时的确认保存）前执行，自动保存不改动正文。"
+                         + "删除行尾空白只去掉空格与制表符（不换行空格、全角空格等不动），"
+                         + "与编辑菜单里的「删除行尾空白」同一口径。"
                          + "两项都不是保义操作：删除行尾空白会破坏 Markdown 的行尾双空格（硬换行）与补丁文件的空行，"
                          + "补齐末尾换行会改写补丁文件这类以末尾换行为语义的格式；"
                          + "没有内置语法的扩展名（如 Markdown 的 .md）按「纯文本」归类，"

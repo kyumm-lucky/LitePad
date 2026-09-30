@@ -172,6 +172,29 @@ enum SaveCleanupOutcome {
     case rejected(reason: String)
 }
 
+/// 标签与当前编辑视图之间的回调包。九个入口同生共死：视图装上时整份写入，拆除时整份清空。
+/// 各入口都以弱引用兜底、不会崩，但拆除后继续留着会让「有没有视图」的判定分叉
+struct EditorBridge {
+    /// 跳转到指定行（从 1 起）
+    var goToLine: ((Int) -> Void)?
+    /// 选中并滚动到第 index 个查找匹配
+    var findNavigation: ((Int) -> Void)?
+    /// 替换：参数 true = 全部替换
+    var replace: ((Bool) -> Void)?
+    /// 当前选区文本（无选区时为空串）与全文，供工具面板取文本
+    var textSource: (() -> (selection: String, fullText: String))?
+    /// 工具结果写回：useSelection 为真替换当前选区（无选区则插入光标处），为假替换全文
+    var writeBack: ((String, Bool) -> Void)?
+    /// 行操作：目标范围是选区覆盖到的整行（无选区时是全文），只有视图层算得出来
+    var lineOperation: ((LineOperationKind) -> Void)?
+    /// 保存前清理（撤销协议路径必须在视图层执行）
+    var saveCleanup: (() -> SaveCleanupOutcome)?
+    /// 编辑器是否处于输入法组字；视图不存在时为 nil，按「不在组字」处理
+    var isComposing: (() -> Bool)?
+    /// 整串正文重读；返回是否完成替换。视图不存在时为 nil，会话改走模型侧赋值
+    var reloadText: ((String) -> Bool)?
+}
+
 /// 单个标签页对应的文档状态
 final class EditorTab: ObservableObject, Identifiable {
     let id = UUID()
@@ -269,7 +292,7 @@ final class EditorTab: ObservableObject, Identifiable {
         let count = state.matches.count
         state.current = ((state.current + delta) % count + count) % count
         findState = state
-        findNavigationHandler?(state.current)
+        bridge.findNavigation?(state.current)
     }
 
     /// 文本变化后重算当前查找的匹配（保持条件不变）
@@ -289,34 +312,8 @@ final class EditorTab: ObservableObject, Identifiable {
         findState = newState
     }
 
-    /// 跳转到行的视图层回调：由 CodeTextView 安装，会话层只发行号（非发布属性，不参与刷新）
-    var goToLineHandler: ((Int) -> Void)?
-    /// 查找定位回调：由 CodeTextView 安装，选中并滚动到第 index 个匹配
-    var findNavigationHandler: ((Int) -> Void)?
-    /// 替换回调：由 CodeTextView 安装（撤销协议路径必须在视图层执行）；参数 true = 全部替换
-    var replaceHandler: ((Bool) -> Void)?
-    /// 编辑器文本来源：由 CodeTextView 安装，返回当前选区文本（无选区时为空串）与全文，
-    /// 供工具面板取文本
-    var textSourceProvider: (() -> (selection: String, fullText: String))?
-    /// 工具结果写回：由 CodeTextView 安装（撤销协议路径必须在视图层执行）；
-    /// useSelection 为真替换当前选区（无选区则插入光标处），为假替换全文
-    var writeBackHandler: ((String, Bool) -> Void)?
-    /// 行操作回调：由 CodeTextView 安装（撤销协议路径必须在视图层执行）、视图拆除时清回 nil。
-    /// 目标范围是选区覆盖到的整行（无选区时是全文），这个范围既不是当前选区也不是全文，
-    /// 只有视图层算得出来；视图算出范围后调共用的纯逻辑，再整段替换（一次可撤销的动作）
-    var lineOperationHandler: ((LineOperationKind) -> Void)?
-    /// 保存前清理回调：由 CodeTextView 安装（撤销协议路径必须在视图层执行），
-    /// 视图拆除时清回 nil。显式保存前调用：清理必须是一次可整体撤销的编辑动作，
-    /// 不得改模型文本再推给视图——那会给撤销栈埋下失效区间（KTD5、KTD14）
-    var saveCleanupHandler: (() -> SaveCleanupOutcome)?
-    /// 编辑器是否处于输入法组字（marked text）状态：由 CodeTextView 安装，只读查询；
-    /// 视图不存在（已拆除或尚未建立）时为 nil，按「不在组字」处理。
-    /// 重读这类整串改写必须在组字期间拒绝——组字结束时视图会把自身内容推回模型，
-    /// 刚重读的正确正文会被组字前的旧内容覆盖，并在一秒后被自动写盘写回文件
-    var compositionStateProvider: (() -> Bool)?
-    /// 整串正文重读的落点：由 CodeTextView 安装（整串替换必须在视图层走撤销协议，KTD14），
-    /// 返回是否完成替换。视图不存在时为 nil，会话改走模型侧赋值——那时没有撤销栈要清
-    var reloadTextHandler: ((String) -> Bool)?
+    /// 当前编辑视图装上的回调包：由 CodeTextView 安装，视图拆除时整份清回空值
+    var bridge = EditorBridge()
     /// 本标签的写盘失败是否已提示过：写盘成功时复位，保证自动写盘的连续失败只打扰一次，
     /// 也避免与状态栏的「未保存」混同
     var writeFailureReported = false

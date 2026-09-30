@@ -13,6 +13,10 @@ struct RecoveryEntry: Equatable {
 enum RecoveryAlert: Equatable {
     /// 落盘失败（承载目录只读、空间不足等）：这一次的内容没有进入恢复区
     case writeFailed(message: String)
+    /// 承载文件存在但读不出来（权限、瞬时 I/O）：内存按空处理，但禁止整区重写，免得覆盖盘上仍在的草稿
+    case readFailed(message: String)
+    /// 承载文件读得出但不是可解析的恢复区（不是 JSON / 缺条目表）：按空恢复区处理，下次写入会替换这份损坏文件
+    case contentCorrupted
     /// 正文超过单条上限：这一条不写入，异常终止后恢复不了
     case entryTooLarge(title: String, bytes: Int, limit: Int)
     /// 条目数已达上限：最旧的一条被移出（本次写入本身是成功的）
@@ -23,6 +27,10 @@ enum RecoveryAlert: Equatable {
         switch self {
         case .writeFailed:
             return "write"
+        case .readFailed:
+            return "read"
+        case .contentCorrupted:
+            return "corrupt"
         case .entryTooLarge(let title, _, _):
             return "large:\(title)"
         case .evicted(let title, _):
@@ -47,6 +55,9 @@ enum RecoveryAlert: Equatable {
 ///   单次重写的成本由下面两个上限封顶（最坏 16 MiB，正常只有几 KB），主线程上毫秒级。
 /// - 结构损坏的条目（字段类型不对 / 缺字段 / 正文为空）在读取时整条丢弃、按「不存在」处理，
 ///   绝不降级成「正文为空」的条目让用户去恢复；其余条目不受影响。
+/// - 「文件读不出来」与「内容损坏」必须分开：文件不存在才是空恢复区；内容损坏（读得出但不是
+///   可解析的恢复区）按空处理并允许下次写入替换；读失败（权限 / 瞬时 I/O）则禁止整区重写，
+///   否则会用空集覆盖盘上仍在的草稿。
 ///
 /// 两个上限（实施时定死，取值理由见 `maxEntryBytes` / `maxEntries`）：
 /// 单条正文 1 MiB 与条目数 16 条；超限策略分别是「跳过该条并上报」与「淘汰最旧的并上报」。
@@ -81,12 +92,38 @@ final class RecoveryStore {
     private var retiredWriters: Set<UUID> = []
     /// 已经上报过的告警（按去重键）：同一条连续出现只打扰一次，写盘成功一次即重新武装
     private var reportedAlerts: Set<String> = []
+    /// 承载文件存在但读失败：本次运行禁止 `persist`，避免空集整区重写覆盖盘上的草稿
+    private var persistBlocked = false
+    /// 启动时读侧的告警：构造期还没有上报通道，等会话首帧之后取走
+    private var pendingLoadAlert: RecoveryAlert?
 
     /// `directory` 为 nil 时取 Application Support/LitePad/Recovery
     init(directory: URL? = nil) {
         let file = (directory ?? Self.defaultDirectory()).appendingPathComponent("entries.json")
         self.fileURL = file
-        self.entries = Self.load(from: file)
+        switch Self.load(from: file) {
+        case .loaded(let entries):
+            self.entries = entries
+        case .missing:
+            self.entries = [:]
+        case .corrupted:
+            self.entries = [:]
+            pendingLoadAlert = .contentCorrupted
+        case .unreadable(let error):
+            self.entries = [:]
+            persistBlocked = true
+            pendingLoadAlert = .readFailed(message: error.localizedDescription)
+        }
+    }
+
+    /// 启动读侧的告警（读失败 / 内容损坏）。只取一次，没有则 nil。
+    /// 必须在首帧之后取走再弹——构造期弹模态会抢走随后用于设置窗口尺寸与标题的目标窗口。
+    /// 已经经 `report` 弹过的（去抖写入抢在首帧之前）不再返回，避免同一条弹两次
+    func takeLoadAlert() -> RecoveryAlert? {
+        guard let alert = pendingLoadAlert else { return nil }
+        pendingLoadAlert = nil
+        guard reportedAlerts.insert(alert.dedupeKey).inserted else { return nil }
+        return alert
     }
 
     // MARK: - 读
@@ -170,8 +207,13 @@ final class RecoveryStore {
     /// 唯一的落盘路径：整个恢复区一次原子重写。
     /// 写入与删除都从这里出去 —— 单一入口 + @MainActor 的提交顺序就是执行顺序，
     /// 因此不存在「删除被还没落盘的写入反超」的窗口。
-    /// 失败返回 false 并上报；调用方保持内存状态不变
+    /// 失败返回 false 并上报；调用方保持内存状态不变。
+    /// 读失败拦下的本次运行直接拒绝：空集重写会覆盖盘上仍在的草稿
     private func persist(_ next: [String: RecoveryEntry]) -> Bool {
+        if persistBlocked {
+            // 启动读失败已经（或即将）弹过一次；这里只拒绝写盘，不再走上报通道
+            return false
+        }
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(),
                                                    withIntermediateDirectories: true)
@@ -191,12 +233,20 @@ final class RecoveryStore {
         return true
     }
 
-    /// 读取承载文件。整份文件读不出来（不存在、被写坏、不是 JSON）时按「空恢复区」处理；
+    /// 读取承载文件的三种结局必须分开：
+    /// 不存在 → 空恢复区（正常启动）；读失败 → 禁止后续整区重写；
+    /// 内容损坏 → 按空处理，允许下次写入替换损坏文件。
     /// 单条结构坏掉只丢那一条，其余条目照常读出 —— 一个元素解码失败不能让整个数组跟着失效
-    private static func load(from fileURL: URL) -> [String: RecoveryEntry] {
-        guard let data = try? Data(contentsOf: fileURL),
-              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let rawEntries = root[Key.entries] as? [Any] else { return [:] }
+    private static func load(from fileURL: URL) -> LoadOutcome {
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            if Self.isMissingFile(error) { return .missing }
+            return .unreadable(error)
+        }
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let rawEntries = root[Key.entries] as? [Any] else { return .corrupted }
 
         var loaded: [String: RecoveryEntry] = [:]
         for raw in rawEntries {
@@ -210,7 +260,32 @@ final class RecoveryStore {
             if let existing = loaded[title], existing.savedAt >= entry.savedAt { continue }
             loaded[title] = entry
         }
-        return loaded
+        return .loaded(loaded)
+    }
+
+    /// 文件不存在：全新安装或恢复区尚未写过。Cocoa 与 POSIX 的「没有这个文件」都算，
+    /// 内层错误也看一眼——`Data(contentsOf:)` 有时把 ENOENT 包在 Cocoa 错误里
+    private static func isMissingFile(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain,
+           nsError.code == NSFileReadNoSuchFileError || nsError.code == NSFileNoSuchFileError {
+            return true
+        }
+        if nsError.domain == NSPOSIXErrorDomain, nsError.code == Int(ENOENT) {
+            return true
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isMissingFile(underlying)
+        }
+        return false
+    }
+
+    /// 启动读侧的三种失败 / 成功形态；与「单条条目损坏」不是同一层
+    private enum LoadOutcome {
+        case loaded([String: RecoveryEntry])
+        case missing
+        case corrupted
+        case unreadable(Error)
     }
 
     /// 上报一次（去重后）：同一条告警连续出现只打扰一次，对应的写入成功即重新武装

@@ -2,7 +2,9 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
-/// 管理所有标签页的会话：新建 / 打开 / 保存 / 关闭 / 会话恢复 / 自动保存 / 外部修改检测
+/// 管理所有标签页的会话：新建 / 打开 / 保存 / 关闭 / 会话恢复 / 自动保存 / 外部修改检测。
+/// 保存与自动写盘见 `EditorSession+Persistence`，恢复区见 `EditorSession+Recovery`，
+/// 重读与外部改动重载见 `EditorSession+Reload`
 @MainActor
 final class EditorSession: ObservableObject {
     @Published private(set) var tabs: [EditorTab] = []
@@ -26,19 +28,19 @@ final class EditorSession: ObservableObject {
     let tools = TextToolsState()
 
     /// 启动会话恢复的 UserDefaults 键
-    private static let sessionKey = "lastSession.urls"
+    static let sessionKey = "lastSession.urls"
     /// 每个标签页的自动保存订阅（防抖写盘）
-    private var autosaveCancellables: [UUID: AnyCancellable] = [:]
+    var autosaveCancellables: [UUID: AnyCancellable] = [:]
     /// 每个标签页的恢复区订阅（R6：未标题正文去抖写入，照自动保存的形态）
-    private var recoveryCancellables: [UUID: AnyCancellable] = [:]
+    var recoveryCancellables: [UUID: AnyCancellable] = [:]
     /// 未标题文稿的恢复区（R6 / R7）：与会话恢复并列的另一条通道，两者互不读写对方的键
-    private let recovery = RecoveryStore.shared
+    let recovery = RecoveryStore.shared
     /// 条目归属表：标题 → 当前写下这条条目的标签。恢复区按稳定标题为键，同名条目可能来自
     /// 上一次运行、也可能已经换了写入方，只有真正写过它的标签才有资格删掉它 ——
     /// 按标题查找的删除出口一旦不校验归属，就会误删同名标签刚写进去的正文
-    private var titleOwners: [String: UUID] = [:]
+    var titleOwners: [String: UUID] = [:]
     /// 启动时恢复区里有待恢复的条目：会话构造期读一次，提示要等首帧之后才弹
-    private var hasPendingRecovery = false
+    var hasPendingRecovery = false
 
     init() {
         hasPendingRecovery = !recovery.allEntries().isEmpty
@@ -98,8 +100,8 @@ final class EditorSession: ObservableObject {
     /// 让它带脏标记（没有保存基准），否则正常退出不会向用户确认、条目也不会删除；
     /// `title` 只在恢复时传入（沿用存下来的标题），其余场合按当前标签集合往后编号
     @discardableResult
-    private func addUntitledTab(text: String = "", savedText: String? = nil,
-                                title: String? = nil) -> EditorTab {
+    func addUntitledTab(text: String = "", savedText: String? = nil,
+                        title: String? = nil) -> EditorTab {
         let tab = EditorTab(text: text, savedText: savedText,
                             untitledTitle: title ?? nextUntitledTitle())
         addTab(tab)
@@ -224,12 +226,12 @@ final class EditorSession: ObservableObject {
     /// 解析后的地址即标签的文件——经链接写盘会把链接本身替换成普通文件；
     /// 打开、另存为与后续的拖入都必须经这一处取身份，不做只比字符串的第二套判断，
     /// 否则同一个文件会被两张标签持有，其中一个还会被外部改动检测静默重载
-    private static func fileIdentity(_ url: URL) -> URL {
+    static func fileIdentity(_ url: URL) -> URL {
         url.standardizedFileURL.resolvingSymlinksInPath()
     }
 
     /// 该路径已由哪张标签持有；nil 表示尚无标签持有（KTD16：一个已解析路径只对应一个标签）
-    private func tabIndex(holdingFileAt url: URL) -> Int? {
+    func tabIndex(holdingFileAt url: URL) -> Int? {
         let identity = Self.fileIdentity(url)
         return tabs.firstIndex { tab in
             guard let bound = tab.fileURL else { return false }
@@ -314,7 +316,7 @@ final class EditorSession: ObservableObject {
 
     /// 逐个确认有改动的标签：任一取消（含保存面板被取消、写盘失败）即中止，
     /// 返回是否全部通过。关闭族与退出保护共用这一份确认循环，各自只负责通过之后的终态动作
-    private func confirmDirtyTabs(_ tabs: [EditorTab]) -> Bool {
+    func confirmDirtyTabs(_ tabs: [EditorTab]) -> Bool {
         for tab in tabs where tab.isDirty {
             switch confirmSave(of: tab) {
             case .save:
@@ -326,285 +328,6 @@ final class EditorSession: ObservableObject {
             }
         }
         return true
-    }
-
-    func saveSelectedTab() {
-        guard let tab = selectedTab else { return }
-        save(tab: tab)
-    }
-
-    @discardableResult
-    func save(tab: EditorTab) -> Bool {
-        if let url = tab.fileURL {
-            return finishSave(tab: tab, to: url)
-        }
-        // 未绑定文件的标签走另存为流程
-        return saveAs(tab: tab)
-    }
-
-    /// 当前标签另存为新文件，成功后标签改绑新文件
-    @discardableResult
-    func saveAsSelectedTab() -> Bool {
-        guard let tab = selectedTab else { return false }
-        return saveAs(tab: tab)
-    }
-
-    @discardableResult
-    private func saveAs(tab: EditorTab) -> Bool {
-        let panel = NSSavePanel()
-        // 默认文件名取标签的标题（R8）：未标题标签是「新文件2」，就默认存成「新文件2.txt」
-        panel.nameFieldStringValue = tab.fileURL?.lastPathComponent ?? "\(tab.displayName).txt"
-        panel.message = "选择保存位置"
-        guard panel.runModal() == .OK, let url = panel.url else { return false }
-        // 绑定前按 KTD16 的统一规则查重：目标路径已由别的标签持有时中止，
-        // 既不改本标签的绑定，也不动对方标签
-        let target = Self.fileIdentity(url)
-        if let holder = tabIndex(holdingFileAt: target), tabs[holder] !== tab {
-            presentErrorAlert(title: "无法保存到该文件",
-                              message: "“\(target.lastPathComponent)”已由标签“\(tabs[holder].displayName)”打开。"
-                                  + "请换一个文件名，或先关闭那个标签。")
-            return false
-        }
-        // 清理放在面板确认之后：取消另存为不该改动正文
-        let ok = finishSave(tab: tab, to: target)
-        if ok {
-            recordRecent(url)
-        }
-        return ok
-    }
-
-    /// 显式保存的统一入口：先在写盘前按设置清理正文，再落盘。
-    /// 清理被编辑视图拒绝时中止本次保存并报错——不能默默跳过设置项
-    @discardableResult
-    private func finishSave(tab: EditorTab, to url: URL) -> Bool {
-        switch prepareSaveCleanup(for: tab) {
-        case .rejected(let reason):
-            return abortSave(tab: tab, reason: reason)
-        case .done, .noEditor:
-            guard let failure = write(tab: tab, to: url) else { return true }
-            // 用户已看到失败：登记后自动写盘不再就同一问题重复打扰
-            tab.writeFailureReported = true
-            presentErrorAlert(title: "无法保存文件",
-                              message: failure.message + WriteFailure.dirtyNote + "请在处理问题后重试。")
-            return false
-        }
-    }
-
-    /// 显式保存前的正文清理（KTD5：只有显式保存清理，自动保存不动正文）。
-    /// 有编辑视图的标签（当前标签）经撤销协议就地清理，清理是一次可整体撤销的编辑动作；
-    /// 没有视图的标签（保存全部与退出确认里的多数）没有撤销栈可走，直接作用于模型文本。
-    /// 下面的模型侧改写只走得到无视图的标签：视图存在时上面的回调只会返回 done / rejected。
-    /// 这条不得推广到有视图的保存上——那既违背 KTD5，又会给撤销栈埋下失效区间（KTD14）
-    private func prepareSaveCleanup(for tab: EditorTab) -> SaveCleanupOutcome {
-        let settings = AppSettings.shared
-        guard settings.saveCleanupApplies(to: tab.language) else { return .done }
-
-        if tab === selectedTab, let cleanup = tab.saveCleanupHandler {
-            switch cleanup() {
-            case .done:
-                return .done
-            case .rejected(let reason):
-                return .rejected(reason: reason)
-            case .noEditor:
-                break // 视图已拆除：继续按无视图标签处理
-            }
-        }
-
-        let cleaned = SaveCleanup.applying(to: tab.text,
-                                           trimTrailingWhitespace: settings.trimTrailingWhitespaceOnSave,
-                                           ensureFinalNewline: settings.ensureFinalNewlineOnSave,
-                                           lineEnding: tab.lineEnding)
-        guard cleaned != tab.text else { return .done }
-        tab.text = cleaned
-        // 模型侧整串替换后匹配区间已失效，必须重算（KTD15）
-        tab.refreshMatches()
-        return .done
-    }
-
-    /// 清理被拒后中止保存：保持脏状态与原内容，给出可执行的失败原因
-    @discardableResult
-    private func abortSave(tab: EditorTab, reason: String) -> Bool {
-        tab.writeFailureReported = true
-        presentErrorAlert(title: "无法保存文件", message: reason + WriteFailure.dirtyNote)
-        return false
-    }
-
-    /// 统一落盘：统一换行符 → 按所选编码真实转码（无法表示正文即拒绝写入，KTD4）→ 原子写 → 改绑基准。
-    /// 只返回失败原因，提示由各入口按自己的打扰口径处理；失败时不写盘、不改基准、不标记干净
-    private func write(tab: EditorTab, to url: URL) -> WriteFailure? {
-        guard let data = tab.encoding.encode(tab.lineEnding.applying(to: tab.text)) else {
-            return .unrepresentable(tab.encoding)
-        }
-        do {
-            try data.write(to: url, options: .atomic)
-        } catch {
-            return .io(error)
-        }
-        tab.markSaved(to: url)
-        tab.writeFailureReported = false
-        // 标签一旦绑定了文件就不再是未标题文稿，恢复区里的条目就此离开（HTD 的
-        // 「另存为成功并绑定文件」出口；显式保存与另存为共用这一个落点）
-        retireRecoveryEntry(for: tab)
-        persistSession()
-        return nil
-    }
-
-    /// 文件标签的自动保存：文本变化 1 秒后写盘（可在设置关闭；未标题文稿不参与）。
-    /// 自动保存不做保存时清理（KTD5），失败也只在首次给一次显著提示
-    private func installAutosave(for tab: EditorTab) {
-        autosaveCancellables[tab.id] = tab.$text
-            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
-            .sink(receiveValue: { [weak self] _ in
-                Task { @MainActor in
-                    guard let self,
-                          AppSettings.shared.autosaveEnabled,
-                          let url = tab.fileURL,
-                          tab.text != tab.savedText else { return }
-                    guard let failure = self.write(tab: tab, to: url) else { return }
-                    self.reportAutosaveFailure(failure, tab: tab)
-                }
-            })
-    }
-
-    /// 自动写盘失败：同一标签连续失败只显著提示一次，既避免每秒打扰，
-    /// 也避免与状态栏的「未保存」混同（用户必须知道磁盘上的副本没有更新）
-    private func reportAutosaveFailure(_ failure: WriteFailure, tab: EditorTab) {
-        guard !tab.writeFailureReported else { return }
-        tab.writeFailureReported = true
-        presentErrorAlert(title: "自动保存失败",
-                          message: "“\(tab.displayName)”未能自动写盘。\(failure.message)"
-                              + WriteFailure.dirtyNote + "请手动保存或先处理该问题。")
-    }
-
-    // MARK: - 恢复区（R6 / R7）
-
-    /// 未标题标签的恢复区写入：照自动保存的形态，正文停止变化一秒后落盘。
-    /// 会话恢复只记文件路径，未标题正文只能走这条并列通道（KTD3）
-    private func installRecovery(for tab: EditorTab) {
-        recoveryCancellables[tab.id] = tab.$text
-            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
-            .sink(receiveValue: { [weak self, weak tab] _ in
-                Task { @MainActor in
-                    guard let self, let tab else { return }
-                    self.syncRecoveryEntry(for: tab)
-                }
-            })
-    }
-
-    /// 一次去抖后的同步：正文非空才写入，正文被清空则删除条目（HTD 的四个删除出口之一）。
-    /// 已绑定文件的标签不写恢复区 —— 它不是未标题文稿，收尾也已经在绑定那一刻做过
-    private func syncRecoveryEntry(for tab: EditorTab) {
-        guard let title = tab.untitledTitle, tab.fileURL == nil else { return }
-        if tab.text.isEmpty {
-            // 只删自己写过的条目：同名条目可能属于上一次运行的文稿或其他活标签
-            //（恢复区按稳定标题为键），刚建出的空标签没有资格把它删掉
-            guard titleOwners[title] == tab.id else { return }
-            titleOwners.removeValue(forKey: title)
-            recovery.remove(title: title)
-            return
-        }
-        recovery.write(RecoveryEntry(title: title, text: tab.text, savedAt: Date()), writer: tab.id)
-        titleOwners[title] = tab.id
-    }
-
-    /// 一个标签彻底结束时把它的恢复区条目移出（带墓碑，拦下去抖窗口里的在途写入）。
-    /// 三个结束出口共用这一处：关闭标签、正常退出确认通过、另存为绑定文件。
-    /// 只有条目真的是这个标签写的才删：同名条目可能已经换了主人（旧标签另存为后释放了标题、
-    /// 新标签拿到同名标题并写入），此时删除会连新标签的正文一起删掉；不是自己的条目就只立墓碑，
-    /// 让这个写入方的在途写入作废，条目本身留给它的真正主人
-    private func retireRecoveryEntry(for tab: EditorTab) {
-        guard let title = tab.untitledTitle else { return }
-        guard titleOwners[title] == tab.id else {
-            recovery.tombstone(writer: tab.id)
-            return
-        }
-        titleOwners.removeValue(forKey: title)
-        recovery.retire(title: title, writer: tab.id)
-    }
-
-    // MARK: - 启动恢复（R6 / R7）
-
-    /// 启动时的恢复入口：恢复区非空就提示恢复或放弃（R7）。
-    /// **必须在首帧之后调用** —— 会话构造期还没有窗口，此时弹模态会抢走随后用于设置窗口尺寸与标题的目标窗口。
-    /// 与两项启动设置无关：只要恢复区非空就提示
-    func presentRecoveryPromptIfNeeded() {
-        guard hasPendingRecovery else { return }
-        hasPendingRecovery = false
-        let entries = recovery.allEntries()
-        guard !entries.isEmpty else { return }
-
-        let alert = NSAlert()
-        alert.messageText = "有 \(entries.count) 份未保存的未标题文稿"
-        // 放弃是不可逆的批量删除，必须把名单列出来：不列名单的一键清空会删掉多份找不回的内容
-        alert.informativeText = "上次运行结束时这些文稿还没有存到文件，已留在恢复区：\n\n"
-            + entries.map { "・\($0.title)" }.joined(separator: "\n")
-            + "\n\n「恢复」会把它们重新建成标签页；「放弃并删除」会永久删除这 \(entries.count) 份内容，无法找回。"
-        alert.addButton(withTitle: "恢复")
-        alert.addButton(withTitle: "放弃并删除")
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            restore(entries)
-        case .alertSecondButtonReturn:
-            recovery.removeAll()
-        default:
-            break
-        }
-        // 放弃之后窗口不该空着；恢复的场合已经有标签了，这里只会走「放弃」这一支
-        fillLaunchPlaceholderIfNeeded()
-    }
-
-    /// 按恢复区里的条目建标签（R6 / R8）：沿用存下来的标题，追加在现有标签之后。
-    /// 内容不带保存基准（`savedText` 传空串），因此建出来就是未保存状态 —— 否则正常退出
-    /// 不会向用户确认、条目也不会删除，内容会在退出时无声消失，而且每次启动都重复提示
-    private func restore(_ entries: [RecoveryEntry]) {
-        var firstRestored: EditorTab?
-        for entry in entries {
-            let tab = addUntitledTab(text: entry.text, savedText: "", title: entry.title)
-            // 恢复出来的标签就是它自己那条条目的所有者：不登记的话，在这张标签里清空正文时
-            // 会被归属校验挡下，条目留在盘上，异常终止后会复活用户已经删掉的内容
-            titleOwners[entry.title] = tab.id
-            if firstRestored == nil {
-                firstRestored = tab
-            }
-        }
-        // 恢复出来的第一张成为活动标签；条目先不清空——新标签的重新写入是去抖的，
-        // 提前清空会在窗口期内崩溃时真丢内容
-        if let firstRestored, let index = tabs.firstIndex(where: { $0 === firstRestored }) {
-            selectedTabIndex = index
-        }
-    }
-
-    /// 启动占位标签：恢复提示处理完后窗口不该空着（放弃、或提示被关掉时兜底）。
-    /// 与会话恢复同一条口径：只有「启动时创建新文稿」才建
-    private func fillLaunchPlaceholderIfNeeded() {
-        guard tabs.isEmpty, AppSettings.shared.launchAction == .newDocument else { return }
-        addUntitledTab()
-    }
-
-    /// 恢复区的可见提示：上报由存储侧按去重键收敛（同一条连续出现只弹一次），
-    /// 这里只按类型给文案
-    private func reportRecoveryAlert(_ alert: RecoveryAlert) {
-        switch alert {
-        case .writeFailed(let message):
-            presentErrorAlert(title: "恢复区无法写入",
-                              message: message + "\n未标题文稿的正文没有进入恢复区："
-                                  + "在这些内容写入磁盘之前，异常终止（崩溃或强制退出）后会丢失。"
-                                  + "请手动保存这些文稿。")
-        case .entryTooLarge(let title, let bytes, let limit):
-            presentErrorAlert(title: "恢复区没有保护“\(title)”",
-                              message: "这篇文稿的正文有 \(Self.byteCountText(bytes))，"
-                                  + "超过恢复区单条上限（\(Self.byteCountText(limit))）。"
-                                  + "它不会被写入恢复区，异常终止后无法恢复，请手动保存。")
-        case .evicted(let title, let limit):
-            presentNotice(title: "恢复区已满",
-                          message: "恢复区最多保留 \(limit) 条未标题文稿，"
-                              + "最旧的“\(title)”已被移出：异常终止后无法恢复它，请手动保存。")
-        }
-    }
-
-    /// 字节数的展示口径：提示里只说大概量级
-    private static func byteCountText(_ bytes: Int) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
     }
 
     func closeSelectedTab() {
@@ -668,126 +391,6 @@ final class EditorSession: ObservableObject {
                                   forKey: Self.sessionKey)
     }
 
-    /// 外部修改检测：只处理无未保存改动的文件标签；已察觉后记录新时间避免重复提示
-    func checkExternalChanges() {
-        for tab in tabs {
-            guard let url = tab.fileURL, !tab.isDirty,
-                  let diskDate = EditorTab.fileDate(at: url),
-                  let knownDate = tab.fileModificationDate,
-                  diskDate > knownDate else { continue }
-            switch AppSettings.shared.externalChangeAction {
-            case .update:
-                // 重载成功即换了基准（markSaved 已记下新的磁盘时间），没有换掉内容才需要自己记
-                if reload(tab: tab, from: url) == nil { continue }
-            case .ask:
-                if confirmReload(of: tab), reload(tab: tab, from: url) == nil { continue }
-            case .keepVersion:
-                break
-            }
-            // 没有真的换掉内容（用户选择保留当前版本，或重载失败）：记下磁盘时间，
-            // 避免每次应用激活都对同一份读不进来的内容重复提示 / 重复重试
-            tab.fileModificationDate = diskDate
-        }
-    }
-
-    /// 外部改动重载：读盘 → 宽容解码 → 字节往返校验 → 设为干净基准，与显式重读共用同一条链路。
-    /// 失败返回原因且保持原样，由调用方静默处理——自动发生的重载失败不该弹模态框打断用户
-    private func reload(tab: EditorTab, from url: URL) -> ReloadFailure? {
-        // 整串改动与显式重读同一落点：有视图就经它走撤销协议（KTD14），没视图才改模型文本
-        loadBaseline(into: tab, from: url, strategy: .tolerant)
-    }
-
-    // MARK: - 按编码重读（R5）
-
-    /// 按指定编码重新从磁盘读取当前标签：改错编码时无需关闭标签或重启。
-    /// 与状态栏编码下拉里「只改保存编码」的选项并存——选项只改保存编码，这里才真的重读正文。
-    /// 显式重读无视「文稿被其他应用更改」的既有策略：用户发的指令优先
-    func reloadSelectedTab(with encoding: TextEncoding) {
-        guard let tab = selectedTab, let url = tab.fileURL else { return }
-        // 组字期间拒绝（与编辑视图里两处组字保护同一口径）：组字结束时视图会把自身内容推回模型，
-        // 刚重读的正文会被组字前的旧内容覆盖，并在一秒后被自动写盘写回文件
-        guard tab.compositionStateProvider?() != true else {
-            NSSound.beep()
-            return
-        }
-        // 有未保存改动先走三键确认：取消（含保存被取消、写盘失败）即中止，什么都不改
-        if tab.isDirty {
-            switch confirmSave(of: tab) {
-            case .save:
-                guard save(tab: tab) else { return }
-            case .discard:
-                break
-            case .cancel:
-                return
-            }
-        }
-        // 用户指定的编码走严格解码：选择错了就报错，绝不宽容兜底成一篇看似合法的乱码
-        let failure = loadBaseline(into: tab, from: url, strategy: .strict(encoding))
-        guard let failure else { return }
-        // 失败时不把指定编码留在保存编码上（KTD4：不把指定编码绑成保存编码）：这个编码已经证明
-        // 读不通这个文件，留着它只会让下一次显式保存把认得出的正文改写成另一个编码的字节
-        tab.encoding = tab.savedEncoding
-        presentErrorAlert(title: "无法按此编码重新载入", message: failure.message)
-    }
-
-    /// 重读正文的落点：视图存在时把整串正文交给编辑视图走撤销协议（KTD14），
-    /// 视图已拆除时直接改模型文本（那时没有撤销栈要清），并按 KTD15 重算查找匹配区间
-    private func replaceWholeText(_ newText: String, in tab: EditorTab) -> Bool {
-        guard let replaceText = tab.reloadTextHandler else {
-            tab.text = newText
-            tab.refreshMatches()
-            return true
-        }
-        return replaceText(newText)
-    }
-
-    /// 「读盘 → 解码 → 字节往返校验 → 设为干净基准」的唯一实现（KTD4）：
-    /// 显式重读与外部改动重载共用它——任何建立「保存基准」的转换都必须可失败。
-    /// 失败返回原因，且标签的内容、编码、脏标记三者一律不变：错误解码出来的正文一旦成为
-    /// 新的干净基准，下一次敲键或自动写盘就会把乱码覆盖回原文件。
-    /// `strategy` 决定解码口径；正文替换经 `replaceWholeText` 落到视图或模型（KTD14）
-    private func loadBaseline(into tab: EditorTab, from url: URL,
-                              strategy: DecodeStrategy) -> ReloadFailure? {
-        let data: Data
-        do {
-            data = try Data(contentsOf: url)
-        } catch {
-            return .unreadable(error)
-        }
-
-        let decoded: (text: String, encoding: TextEncoding)
-        switch strategy {
-        case .strict(let encoding):
-            guard let text = encoding.decodeStrictly(data) else { return .undecodable(encoding) }
-            decoded = (text, encoding)
-        case .tolerant:
-            let settings = AppSettings.shared
-            decoded = TextEncoding.decode(data,
-                                          priority: settings.encodingPriority,
-                                          respectCharsetDeclaration: settings.respectCharsetDeclaration)
-        }
-        // 字节往返校验（KTD4）：读出的正文按同一编码再编码必须与磁盘字节一致，否则保存会改写文件
-        guard decoded.encoding.roundTrips(decoded.text, with: data) else {
-            return .roundTripMismatch(decoded.encoding)
-        }
-        guard replaceWholeText(decoded.text, in: tab) else { return .replaceRejected }
-
-        tab.encoding = decoded.encoding
-        tab.lineEnding = LineEnding.detect(in: decoded.text)
-        // 正文、编码、换行符三者一起成为新基准：必须全部落齐后才标记干净
-        tab.markSaved(to: url)
-        return nil
-    }
-
-    private func confirmReload(of tab: EditorTab) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "“\(tab.displayName)”已被其他程序修改"
-        alert.informativeText = "是否重新载入磁盘上的版本？当前内容将被替换。"
-        alert.addButton(withTitle: "重新载入")
-        alert.addButton(withTitle: "保留当前版本")
-        return alert.runModal() == .alertFirstButtonReturn
-    }
-
     /// 打开/关闭查找面板（Cmd+F 切换）
     func toggleFind() {
         guard let tab = selectedTab else { return }
@@ -843,13 +446,13 @@ final class EditorSession: ObservableObject {
 
     /// 把编辑器当前选区（无选区取全文）送入工具面板；面板内「取编辑器」按钮复用
     func seedToolsFromEditor(tab: EditorTab) {
-        let source = tab.textSourceProvider?() ?? (selection: "", fullText: tab.text)
+        let source = tab.bridge.textSource?() ?? (selection: "", fullText: tab.text)
         tools.seed(from: source.selection.isEmpty ? source.fullText : source.selection)
     }
 
     /// 把工具结果写回编辑器：replaceSelection 为真替换选区（无选区则插入光标处），为假替换全文
     func writeBackToolsResult(_ text: String, replaceSelection: Bool, tab: EditorTab) {
-        tab.writeBackHandler?(text, replaceSelection)
+        tab.bridge.writeBack?(text, replaceSelection)
     }
 
     // MARK: - 行操作
@@ -857,7 +460,7 @@ final class EditorSession: ObservableObject {
     /// 对当前标签执行一项行操作：目标行范围与写回都在视图层完成（撤销协议路径必须在视图层走），
     /// 标签还没有编辑视图时无动作
     func applyLineOperation(_ kind: LineOperationKind) {
-        selectedTab?.lineOperationHandler?(kind)
+        selectedTab?.bridge.lineOperation?(kind)
     }
 
     /// 行操作在当前标签上是否可用：没有打开的标签一律不可用；
@@ -886,79 +489,19 @@ final class EditorSession: ObservableObject {
             NSSound.beep()
             return
         }
-        tab.goToLineHandler?(line)
+        tab.bridge.goToLine?(line)
     }
 
     // MARK: - Private
 
     /// 记录最近文件并刷新菜单数据源
-    private func recordRecent(_ url: URL) {
+    func recordRecent(_ url: URL) {
         recentFiles = RecentFiles.record(url)
     }
 
-    private enum SaveChoice { case save, discard, cancel }
+    enum SaveChoice { case save, discard, cancel }
 
-    /// 落盘失败的原因：两种都必须不写盘、不改基准、不标记干净
-    private enum WriteFailure {
-        /// 所选编码无法表示正文中的部分字符（不得兜底成空数据，KTD4）
-        case unrepresentable(TextEncoding)
-        /// 写盘本身的 I/O 失败
-        case io(Error)
-
-        /// 面向用户的失败说明；显式保存与自动写盘共用同一份，提示框只在标题上区分来源
-        var message: String {
-            switch self {
-            case .unrepresentable(let encoding):
-                return "当前编码（\(encoding.displayName)）无法表示文稿中的部分字符。"
-            case .io(let error):
-                return error.localizedDescription
-            }
-        }
-
-        /// 失败后文稿状态的统一交代：任何路径都不允许出现「已保存但内容为空」这类第三态
-        static let dirtyNote = "文件未写入，文稿保持未保存状态。"
-    }
-
-    /// 重读磁盘时的解码口径
-    private enum DecodeStrategy {
-        /// 显式重读：按用户指定的编码严格解码，跳过 BOM 嗅探与文稿内的编码声明
-        case strict(TextEncoding)
-        /// 外部改动重载：继续用宽容解码，优先保证读得出内容（与「打开」同一口径）
-        case tolerant
-    }
-
-    /// 建立保存基准的失败原因（KTD4）：每一种都不写盘、不改内容、不改编码、不标记干净
-    private enum ReloadFailure {
-        /// 读盘失败（文件已被删除、权限不足等）
-        case unreadable(Error)
-        /// 严格解码失败：所选编码读不通磁盘上的字节
-        case undecodable(TextEncoding)
-        /// 字节往返校验失败：读出的正文按同一编码再编码与磁盘字节不一致
-        case roundTripMismatch(TextEncoding)
-        /// 编辑视图拒绝了整串替换（撤销协议未通过）
-        case replaceRejected
-
-        /// 面向用户的失败说明：显式重读据此报错，外部改动重载只关心「有没有失败」
-        var message: String {
-            switch self {
-            case .unreadable(let error):
-                return "读不到磁盘上的内容：\(error.localizedDescription)"
-            case .undecodable(let encoding):
-                return "磁盘上的字节无法用「\(encoding.displayName)」解码，这个编码读不出原文。"
-                    + "为避免读出错版正文后被保存覆盖回文件，本次重读已中止："
-                    + "正文、编码与保存基准都保持原样（编码已恢复为原来的保存编码）。请换一个编码再试。"
-            case .roundTripMismatch(let encoding):
-                return "按「\(encoding.displayName)」读出的正文再编码回去与磁盘字节不一致，"
-                    + "这个编码认不出原文（很可能是选错了编码）。"
-                    + "为避免之后的保存把文件改写成乱码，本次重读已中止："
-                    + "正文、编码与保存基准都保持原样（编码已恢复为原来的保存编码）。请换一个编码再试。"
-            case .replaceRejected:
-                return "编辑视图没有接受这次整串替换，正文与编码都保持原样。"
-            }
-        }
-    }
-
-    private func confirmSave(of tab: EditorTab) -> SaveChoice {
+    func confirmSave(of tab: EditorTab) -> SaveChoice {
         let alert = NSAlert()
         alert.messageText = "是否保存对“\(tab.displayName)”的更改？"
         alert.informativeText = "如果不保存，更改将会丢失。"
@@ -972,7 +515,7 @@ final class EditorSession: ObservableObject {
         }
     }
 
-    private func presentErrorAlert(title: String, message: String) {
+    func presentErrorAlert(title: String, message: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
@@ -981,7 +524,7 @@ final class EditorSession: ObservableObject {
     }
 
     /// 提示性说明：只为把一批操作的结果交代清楚（如保存全部跳过了哪些标签），不带错误着色
-    private func presentNotice(title: String, message: String) {
+    func presentNotice(title: String, message: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message

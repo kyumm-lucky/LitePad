@@ -311,6 +311,12 @@ enum SaveCleanup {
         return result
     }
 
+    /// 行尾空白的口径：只认空格与制表符，不含不换行空格、全角空格等 Unicode 空白。
+    /// 保存时清理与行操作共用这一份，避免同一命令两套结果
+    static func isTrailingWhitespace(_ character: Character) -> Bool {
+        character == " " || character == "\t"
+    }
+
     /// 删除每行行尾的空格与制表符，行尾符本身保留；末行（末尾没有行尾符）的空白同样删除。
     /// 按字符扫描而非正则：\r\n 在 Swift 里是一个字符，逐字符处理天然不拆错行尾
     static func trimmingTrailingWhitespace(_ text: String) -> String {
@@ -319,7 +325,7 @@ enum SaveCleanup {
         // 尚未确认位于行尾的空白：遇到行尾符就丢弃，遇到其他字符说明不在行尾，原样补回
         var pending = ""
         for character in text {
-            if character == " " || character == "\t" {
+            if isTrailingWhitespace(character) {
                 pending.append(character)
             } else if character.isNewline {
                 result.append(character)
