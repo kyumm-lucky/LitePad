@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 
 /// 工具抽屉：贴窗口右缘的通栏面板（高度与窗口一致），从右向左滑入，左缘可拖拽调宽。
-/// 承载编码转换、JSON 格式化、字符串对比与行操作四类工具，输入默认取编辑器选区（无选区取全文），
-/// 结果可复制或写回编辑器
+/// 承载编码转换、JSON 格式化、字符串对比、行操作与哈希 / UUID / 时间戳 / HTML 实体，
+/// 输入默认取编辑器选区（无选区取全文），结果可复制或写回编辑器
 struct ToolsDrawer: View {
     @ObservedObject var tools: TextToolsState
     @ObservedObject var tab: EditorTab
@@ -97,13 +97,16 @@ struct ToolsDrawer: View {
 
             Spacer(minLength: 0)
 
-            Button {
-                session.seedToolsFromEditor(tab: tab)
-            } label: {
-                Label("取编辑器", systemImage: "arrow.down.doc")
+            // UUID 不需要输入，取编辑器对它没有意义
+            if tools.kind.requiresInput {
+                Button {
+                    session.seedToolsFromEditor(tab: tab)
+                } label: {
+                    Label("取编辑器", systemImage: "arrow.down.doc")
+                }
+                .buttonStyle(PanelActionButtonStyle(tone: .neutral))
+                .help("取编辑器当前选区（无选区时取全文）")
             }
-            .buttonStyle(PanelActionButtonStyle(tone: .neutral))
-            .help("取编辑器当前选区（无选区时取全文）")
 
             PanelIconButton(symbol: "xmark", help: "关闭（Esc）") { session.closeTool() }
         }
@@ -227,7 +230,9 @@ private final class DrawerResizeNSView: NSView, CursorDeclaring {
     }
 }
 
-/// 编码转换：输入 → 结果，方向与工具专属选项控制转换口径，结果可复制 / 替换编辑器
+/// 输入 → 结果一类的工具：编码转换、JSON 格式化、哈希、UUID、时间戳与 HTML 实体。
+/// 方向分段只在有方向档的工具上出现，输入区只在需要输入的工具上出现；
+/// 工具专属选项控制转换口径，结果可复制 / 替换编辑器
 private struct ConverterSection: View {
     @ObservedObject var tools: TextToolsState
     @ObservedObject var tab: EditorTab
@@ -236,20 +241,27 @@ private struct ConverterSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                LiquidSegmented(labels: tools.kind.directionLabels,
-                                selectedIndex: ConvertDirection.allCases.firstIndex(of: tools.direction) ?? 0,
-                                onSelect: { index in
-                                    tools.direction = ConvertDirection.allCases[index]
-                                    tools.recompute()
-                                })
+                if tools.kind.hasDirection {
+                    LiquidSegmented(labels: tools.kind.directionLabels,
+                                    selectedIndex: ConvertDirection.allCases.firstIndex(of: tools.direction) ?? 0,
+                                    onSelect: { index in
+                                        tools.direction = ConvertDirection.allCases[index]
+                                        tools.recompute()
+                                    },
+                                    segmentWidth: directionSegmentWidth)
+                        .transition(.opacity)
+                }
                 options
                 Spacer(minLength: 0)
             }
 
-            PanelSectionLabel(title: "输入", detail: "编辑器选区 / 全文")
-            CodeTextEditor(text: inputBinding, placeholder: "在此输入或粘贴文本")
+            // UUID 是凭空生成，没有输入区（取编辑器的文本对它没有意义）
+            if tools.kind.requiresInput {
+                PanelSectionLabel(title: "输入", detail: inputDetail)
+                CodeTextEditor(text: inputBinding, placeholder: "在此输入或粘贴文本")
+            }
 
-            PanelSectionLabel(title: "结果", detail: tools.errorMessage == nil ? "实时更新" : "转换失败",
+            PanelSectionLabel(title: "结果", detail: resultDetail,
                               isError: tools.errorMessage != nil)
             PanelResultText(text: tools.errorMessage ?? tools.output,
                             isError: tools.errorMessage != nil)
@@ -276,7 +288,8 @@ private struct ConverterSection: View {
                 .help("用结果替换编辑器全文（可 ⌘Z 回滚）")
             }
             .controlSize(.small)
-            .disabled(tools.input.isEmpty)
+            // 三个按钮都作用于结果区，能不能用只看结果（KTD12）：不需要输入的工具不受输入为空影响
+            .disabled(!tools.resultIsUsable)
         }
         // 编码 ⇄ 解码：只有随方向出现或消失的选项、以及换掉的结果需要过渡，输入栏原地不动
         .animation(Motion.control, value: tools.direction)
@@ -326,9 +339,75 @@ private struct ConverterSection: View {
                                 segmentWidth: 58)
                     .transition(.opacity)
             }
+        case .hash:
+            LiquidSegmented(labels: HashAlgorithm.allCases.map(\.displayName),
+                            selectedIndex: HashAlgorithm.allCases.firstIndex(of: tools.hashAlgorithm) ?? 0,
+                            onSelect: { index in
+                                tools.hashAlgorithm = HashAlgorithm.allCases[index]
+                                tools.recompute()
+                            },
+                            segmentWidth: 58)
+            LitePadToggle(title: "大写",
+                          isOn: optionBinding(\.hashUppercase),
+                          help: "结果用大写十六进制；默认小写，与系统命令行工具一致")
+        case .uuid:
+            LitePadToggle(title: "大写",
+                          isOn: optionBinding(\.uuidUppercase),
+                          help: "标识用大写字母；默认小写")
+            Button {
+                tools.regenerateUUID()
+            } label: {
+                Label("重新生成", systemImage: "shuffle")
+            }
+            .buttonStyle(PanelActionButtonStyle(tone: .neutral))
+            .help("换一个 UUID（打开工具时也会换）")
+        case .timestamp:
+            LiquidSegmented(labels: TimestampUnit.allCases.map(\.displayName),
+                            selectedIndex: TimestampUnit.allCases.firstIndex(of: tools.timestampUnit) ?? 0,
+                            onSelect: { index in
+                                tools.timestampUnit = TimestampUnit.allCases[index]
+                                tools.recompute()
+                            },
+                            segmentWidth: 62)
+            Button {
+                tools.fillTimestampNow()
+            } label: {
+                Label("现在", systemImage: "clock.arrow.circlepath")
+            }
+            .buttonStyle(PanelActionButtonStyle(tone: .neutral))
+            .help("用当前时间填输入栏（按当前方向填时间戳或本地时间）")
+        case .html:
+            if tools.direction == .encode {
+                LitePadToggle(title: "转义非 ASCII",
+                              isOn: optionBinding(\.htmlEscapesNonASCII),
+                              help: "连中文等非 ASCII 字符一起转为 &#xXXXX;；默认只转义 & < > \" ' 与不换行空格")
+                    .transition(.opacity)
+            }
         case .diff, .lines:
             // 对比工具走自己的两栏排布，行操作没有工具专属选项
             EmptyView()
+        }
+    }
+
+    /// 方向分段的单档宽度：时间戳的两档名字更长，需要更宽的档位
+    private var directionSegmentWidth: CGFloat {
+        tools.kind == .timestamp ? 64 : 54
+    }
+
+    /// 输入区与结果区的说明：时间戳按方向提示该输什么 / 会得到什么，其余工具说明来源
+    private var inputDetail: String {
+        guard tools.kind == .timestamp else { return "编辑器选区 / 全文" }
+        return tools.direction == .encode
+            ? "Unix 时间戳（\(tools.timestampUnit.displayName)）"
+            : "本地时间，如 2024-01-02 03:04:05"
+    }
+
+    private var resultDetail: String {
+        if tools.errorMessage != nil { return "转换失败" }
+        switch tools.kind {
+        case .uuid: return "点「重新生成」换一个"
+        case .timestamp: return tools.direction == .encode ? "本地时间" : "Unix 时间戳"
+        default: return "实时更新"
         }
     }
 
@@ -576,9 +655,9 @@ private struct LineOperationsSection: View {
                 .help("用结果替换编辑器全文（可 ⌘Z 回滚）")
             }
             .controlSize(.small)
-            // 还没选操作时结果区是空的，此时写回会把选区清空；结果确实算成了空串（如整段都是行尾空白）
+            // 还没选操作时结果区是空的，写回会把选区清空；结果确实算成了空串（如整段都是行尾空白）
             // 则允许写回，所以这里卡的是「没选过操作」而不是「结果为空」
-            .disabled(tools.input.isEmpty || tools.lineOperation == nil)
+            .disabled(!tools.resultIsUsable || tools.lineOperation == nil)
         }
         // 行注释符号随标签语言变化：注释两项的可用性与已选操作的结果都要跟着重算
         .onAppear { tools.updateLineComment(tab.language.lineComment) }

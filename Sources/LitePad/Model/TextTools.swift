@@ -10,6 +10,10 @@ enum TextToolKind: String, CaseIterable, Identifiable {
     case json
     case diff
     case lines
+    case hash
+    case uuid
+    case timestamp
+    case html
 
     var id: String { rawValue }
 
@@ -22,6 +26,10 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .json: return "JSON 格式化"
         case .diff: return "字符串对比"
         case .lines: return "行操作"
+        case .hash: return "哈希计算"
+        case .uuid: return "UUID 生成"
+        case .timestamp: return "时间戳互转"
+        case .html: return "HTML 实体"
         }
     }
 
@@ -34,15 +42,36 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .json: return "curlybraces"
         case .diff: return "rectangle.split.2x1"
         case .lines: return "arrow.up.arrow.down"
+        case .hash: return "number.square"
+        case .uuid: return "barcode"
+        case .timestamp: return "clock"
+        case .html: return "chevron.left.chevron.right"
         }
     }
 
     /// 两档方向的名称，顺序与 ConvertDirection.allCases 一致：
-    /// JSON 工具的两档是「格式化（.encode）/ 压缩（.decode）」，其余是「编码 / 解码」。
-    /// 行操作不设方向档（一项操作一个按钮），永不渲染这个分段控件
+    /// JSON 工具的两档是「格式化（.encode）/ 压缩（.decode）」，
+    /// 时间戳的两档按转换方向区分（输入侧是时间戳还是本地时间），其余是「编码 / 解码」。
+    /// 没有方向档的工具（行操作、哈希、UUID）不渲染这个分段控件，取值只为满足接口
     var directionLabels: [String] {
-        self == .json ? ["格式化", "压缩"] : ConvertDirection.allCases.map(\.displayName)
+        switch self {
+        case .json: return ["格式化", "压缩"]
+        case .timestamp: return ["转本地时间", "转时间戳"]
+        default: return ConvertDirection.allCases.map(\.displayName)
+        }
     }
+
+    /// 是否有方向档位：行操作一项操作一个按钮，哈希与 UUID 只有一种动作
+    var hasDirection: Bool {
+        switch self {
+        case .lines, .hash, .uuid: return false
+        default: return true
+        }
+    }
+
+    /// 是否需要输入：UUID 是凭空生成（R24），面板不渲染输入区，
+    /// 输入为空也不影响结果区可用（KTD12）
+    var requiresInput: Bool { self != .uuid }
 
     /// 对比工具用 A/B 两栏，其余工具用「输入 → 结果」
     var isConverter: Bool { self != .diff }
@@ -69,11 +98,36 @@ final class TextToolsState: ObservableObject {
     /// JSON：格式化时的缩进档位
     @Published var jsonIndent: JSONIndent = .twoSpaces
 
+    // MARK: - 哈希 / UUID / 时间戳 / HTML 实体
+
+    /// 哈希：算法档位
+    @Published var hashAlgorithm: HashAlgorithm = .sha256
+    /// 哈希：结果用大写十六进制（默认小写，与系统命令行工具一致）
+    @Published var hashUppercase = false
+    /// UUID：用大写字母
+    @Published var uuidUppercase = false
+    /// 时间戳：单位档位
+    @Published var timestampUnit: TimestampUnit = .seconds
+    /// HTML 实体：连非 ASCII 字符一起转义
+    @Published var htmlEscapesNonASCII = false
+
+    /// UUID 工具当前生成的值：打开工具或点「重新生成」时换一次（取瞬时值，不做定时刷新）
+    private var uuidValue = UUID()
+
     /// 工具切换方向：新工具在列表里更靠后时为真，面板据此决定内容换场的推进方向。
     /// 与 kind 在同一次赋值中发出，视图在同一帧里同时看到新工具与方向
     @Published private(set) var toolSwitchesForward = true
     @Published private(set) var output = ""
     @Published private(set) var errorMessage: String?
+
+    /// 结果区是否可用（KTD12）：三个按钮都作用于结果区的内容，与输入是否为空无关——
+    /// 结果区有内容时一律可用（不需要输入的工具、以及空串的哈希都算这一类）；
+    /// 结果区空着时，需要输入的工具没有输入就无从产出结果；转换失败时也没有可写回的内容
+    var resultIsUsable: Bool {
+        guard errorMessage == nil else { return false }
+        if !output.isEmpty { return true }
+        return !kind.requiresInput || !input.isEmpty
+    }
 
     // MARK: - 字符串对比
 
@@ -93,27 +147,52 @@ final class TextToolsState: ObservableObject {
 
     // MARK: - 变更入口
 
-    /// 切换工具：结果留待重算，输入与选项保留
+    /// 切换工具：结果留待重算，输入与选项保留。
+    /// 打开 UUID 工具时顺手换一个新值（面板打开或用户点击时取一次，不引入定时刷新）。
+    /// 重复点中当前工具也算一次「打开」：抽屉关掉再打开时同样换新的
     func select(kind: TextToolKind) {
-        guard kind != self.kind else { return }
-        let order = TextToolKind.allCases
-        if let previous = order.firstIndex(of: self.kind), let next = order.firstIndex(of: kind) {
-            toolSwitchesForward = next > previous
+        if kind != self.kind {
+            let order = TextToolKind.allCases
+            if let previous = order.firstIndex(of: self.kind), let next = order.firstIndex(of: kind) {
+                toolSwitchesForward = next > previous
+            }
+            self.kind = kind
         }
-        self.kind = kind
+        if kind == .uuid { uuidValue = UUID() }
         recompute()
     }
 
     /// 从编辑器取文本：对比工具填入左栏（右栏保留，便于与标签页或手工输入比对），
-    /// 其余工具填入输入栏
+    /// 其余工具填入输入栏；UUID 不用输入，时间戳在没有可取文本时以当前时间起头
     func seed(from text: String) {
         switch kind {
         case .diff:
             diffLeft = text
+        case .uuid:
+            break
+        case .timestamp where text.isEmpty:
+            input = nowText
         default:
             input = text
         }
         recompute()
+    }
+
+    /// 重新生成 UUID（面板里的「重新生成」）
+    func regenerateUUID() {
+        uuidValue = UUID()
+        recompute()
+    }
+
+    /// 以当前时间填时间戳工具的输入（面板里的「现在」）：输入侧是时间戳还是本地时间由方向决定
+    func fillTimestampNow() {
+        input = nowText
+        recompute()
+    }
+
+    /// 时间戳工具当前方向下代表「现在」的输入文本
+    private var nowText: String {
+        TimestampConverter.now(unit: timestampUnit, asTimestamp: direction == .encode)
     }
 
     /// 填入对比右栏（「从标签页取文本」）
@@ -195,6 +274,20 @@ final class TextToolsState: ObservableObject {
             }
             outcome = LineOperations.apply(operation, to: input, lineRange: nil,
                                            lineComment: lineComment)
+        case .hash:
+            outcome = .success(HashDigest.hex(input, algorithm: hashAlgorithm,
+                                              uppercase: hashUppercase))
+        case .uuid:
+            // 生成过就留着：换一个要走「重新生成」，输入与选项变化不重新随机
+            outcome = .success(UUIDGenerator.format(uuidValue, uppercase: uuidUppercase))
+        case .timestamp:
+            outcome = direction == .encode
+                ? TimestampConverter.toLocalTime(input, unit: timestampUnit)
+                : TimestampConverter.toTimestamp(input, unit: timestampUnit)
+        case .html:
+            outcome = direction == .encode
+                ? .success(HTMLEntityCodec.encode(input, escapeNonASCII: htmlEscapesNonASCII))
+                : .success(HTMLEntityCodec.decode(input))
         case .diff:
             return
         }
