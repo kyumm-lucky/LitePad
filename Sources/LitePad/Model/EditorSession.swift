@@ -33,9 +33,10 @@ final class EditorSession: ObservableObject {
     private var recoveryCancellables: [UUID: AnyCancellable] = [:]
     /// 未标题文稿的恢复区（R6 / R7）：与会话恢复并列的另一条通道，两者互不读写对方的键
     private let recovery = RecoveryStore.shared
-    /// 写过恢复区的标签（条目归它所有）。恢复区按稳定标题为键，同名条目可能来自上一次运行，
-    /// 只有真正写过它的标签才有资格在正文被清空时删掉它
-    private var recoveryOwners: Set<UUID> = []
+    /// 条目归属表：标题 → 当前写下这条条目的标签。恢复区按稳定标题为键，同名条目可能来自
+    /// 上一次运行、也可能已经换了写入方，只有真正写过它的标签才有资格删掉它 ——
+    /// 按标题查找的删除出口一旦不校验归属，就会误删同名标签刚写进去的正文
+    private var titleOwners: [String: UUID] = [:]
     /// 启动时恢复区里有待恢复的条目：会话构造期读一次，提示要等首帧之后才弹
     private var hasPendingRecovery = false
 
@@ -105,10 +106,12 @@ final class EditorSession: ObservableObject {
         return tab
     }
 
-    /// 下一个未标题标题：扫描当前已打开标签的展示名取最大序号 + 1（KD4）。
-    /// 已绑定文件的标签展示的是文件名，不参与未标题编号
+    /// 下一个未标题标题：扫描当前所有标签的未标题标题取最大序号 + 1（KD4）。
+    /// 已绑定文件的标签也要算进来 —— 它的标题在关闭前仍然占位，只看未绑定的标签会让
+    /// 另存为之后的编号被下一个新标签复用，两张标签随后共用一个标题：恢复区按标题为键，
+    /// 前者的收尾动作会把后者刚写进去的正文整条删掉
     private func nextUntitledTitle() -> String {
-        UntitledTitle.next(after: tabs.filter { $0.fileURL == nil }.map(\.displayName))
+        UntitledTitle.next(after: tabs.compactMap(\.untitledTitle))
     }
 
     func newTab() {
@@ -493,21 +496,29 @@ final class EditorSession: ObservableObject {
     private func syncRecoveryEntry(for tab: EditorTab) {
         guard let title = tab.untitledTitle, tab.fileURL == nil else { return }
         if tab.text.isEmpty {
-            // 只删自己写过的条目：同名条目可能属于上一次运行的文稿（恢复区按稳定标题为键），
-            // 刚建出的空标签没有资格把它删掉
-            guard recoveryOwners.remove(tab.id) != nil else { return }
+            // 只删自己写过的条目：同名条目可能属于上一次运行的文稿或其他活标签
+            //（恢复区按稳定标题为键），刚建出的空标签没有资格把它删掉
+            guard titleOwners[title] == tab.id else { return }
+            titleOwners.removeValue(forKey: title)
             recovery.remove(title: title)
             return
         }
         recovery.write(RecoveryEntry(title: title, text: tab.text, savedAt: Date()), writer: tab.id)
-        recoveryOwners.insert(tab.id)
+        titleOwners[title] = tab.id
     }
 
     /// 一个标签彻底结束时把它的恢复区条目移出（带墓碑，拦下去抖窗口里的在途写入）。
-    /// 三个结束出口共用这一处：关闭标签、正常退出确认通过、另存为绑定文件
+    /// 三个结束出口共用这一处：关闭标签、正常退出确认通过、另存为绑定文件。
+    /// 只有条目真的是这个标签写的才删：同名条目可能已经换了主人（旧标签另存为后释放了标题、
+    /// 新标签拿到同名标题并写入），此时删除会连新标签的正文一起删掉；不是自己的条目就只立墓碑，
+    /// 让这个写入方的在途写入作废，条目本身留给它的真正主人
     private func retireRecoveryEntry(for tab: EditorTab) {
         guard let title = tab.untitledTitle else { return }
-        recoveryOwners.remove(tab.id)
+        guard titleOwners[title] == tab.id else {
+            recovery.tombstone(writer: tab.id)
+            return
+        }
+        titleOwners.removeValue(forKey: title)
         recovery.retire(title: title, writer: tab.id)
     }
 
@@ -549,6 +560,9 @@ final class EditorSession: ObservableObject {
         var firstRestored: EditorTab?
         for entry in entries {
             let tab = addUntitledTab(text: entry.text, savedText: "", title: entry.title)
+            // 恢复出来的标签就是它自己那条条目的所有者：不登记的话，在这张标签里清空正文时
+            // 会被归属校验挡下，条目留在盘上，异常终止后会复活用户已经删掉的内容
+            titleOwners[entry.title] = tab.id
             if firstRestored == nil {
                 firstRestored = tab
             }

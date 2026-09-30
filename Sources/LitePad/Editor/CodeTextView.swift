@@ -181,6 +181,8 @@ struct CodeTextView: NSViewRepresentable {
             textView.undoManager?.removeAllActions()
             let selection = textView.selectedRanges.compactMap { $0 as? NSRange }
             textView.string = tab.text
+            // 这条赋值不触发 textDidChange，正文修订号要在这里手动推一格
+            context.coordinator.textRevision += 1
             let maxLoc = (tab.text as NSString).length
             let clamped = selection.map { range -> NSRange in
                 let loc = min(range.location, maxLoc)
@@ -211,6 +213,12 @@ struct CodeTextView: NSViewRepresentable {
         var boundsObserver: NSObjectProtocol?
         /// 已应用过的高亮快照（查找匹配 + 选中词出现），避免无变化时重复全文清设
         fileprivate var appliedHighlight = HighlightSnapshot()
+        /// 视图正文的修订号：正文一变就自增（输入、整串替换、整串赋值三条路都算），
+        /// 供选中词扫描判定结果还能不能复用。不设 private：整串赋值那条路在外层视图的
+        /// updateNSView 里补推（与 appliedHighlight 同一个可见范围）
+        fileprivate var textRevision = 0
+        /// 上次选中词扫描的输入与结果：选区区间 + 当时的正文修订号 → 高亮
+        private var lastWordScan: (revision: Int, selection: NSRange, highlight: SelectedWordHighlight?)?
         /// 已应用到文本视图的外观配置；变化时才重设整篇属性
         var appliedAppearance: EditorAppearanceConfig?
         /// 上次重跑高亮时用的外观：外观变化钩子可能在没换侧的时机被调用，同侧就不必重跑
@@ -336,6 +344,8 @@ struct CodeTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
+            // 视图正文变了，选中词扫描的缓存就此作废（组字期间也算：扫描读的是视图正文）
+            textRevision += 1
             // 组字（marked text）阶段的内容不写入模型、不重刷高亮，
             // 等选字上屏或取消后 NSTextView 会再次回调，届时再同步
             if !textView.hasMarkedText() {
@@ -404,10 +414,21 @@ struct CodeTextView: NSViewRepresentable {
             textView.needsDisplay = true
         }
 
-        /// 当前应有的高亮快照（查找匹配 + 选中词出现）
+        /// 当前应有的高亮快照（查找匹配 + 选中词出现）。
+        /// 选中词扫描带记忆化：选区区间与正文修订号都没变时直接复用上次结果 ——
+        /// 拖选时选区回调逐帧触发，而重扫一次要整篇取值，正文通常一个字都没动。
+        /// 复用条件**必须同时**含修订号：只看选区的话，正文改动后仍会沿用按旧正文
+        /// 算出的区间，高亮画在错位置上（整串替换后旧区间还会指到文本末尾之外）
         private func currentHighlightSnapshot(textView: NSTextView) -> HighlightSnapshot {
-            HighlightSnapshot(find: tab.findState,
-                              selection: selectedWordHighlight(for: textView))
+            let selection = textView.selectedRange()
+            let word: SelectedWordHighlight?
+            if let last = lastWordScan, last.revision == textRevision, last.selection == selection {
+                word = last.highlight
+            } else {
+                word = selectedWordHighlight(for: textView)
+                lastWordScan = (textRevision, selection, word)
+            }
+            return HighlightSnapshot(find: tab.findState, selection: word)
         }
 
         /// 重读落点：把按编码重读得到的整串正文换进编辑视图。整串替换前先清空撤销栈（KTD14）——
@@ -616,12 +637,14 @@ private struct HighlightSnapshot: Equatable {
 }
 
 /// 当前选区的选中词高亮：无选区或不在启用口径内时为 nil。
-/// 走字面扫描而非查找引擎（KTD11）——查找已支持转义语法，选中文本里的字面反斜杠序列会被当成转义
+/// 走字面扫描而非查找引擎（KTD11）——查找已支持转义语法，选中文本里的字面反斜杠序列会被当成转义。
+/// 先看选区再取正文：无选区是最常见的状态，不该为它白物化一遍整篇
 private func selectedWordHighlight(for textView: NSTextView) -> SelectedWordHighlight? {
+    let selected = textView.selectedRange()
+    guard selected.length > 0 else { return nil }
     let text = textView.string
     let nsText = text as NSString
-    let range = NSIntersectionRange(textView.selectedRange(),
-                                    NSRange(location: 0, length: nsText.length))
+    let range = NSIntersectionRange(selected, NSRange(location: 0, length: nsText.length))
     guard range.length > 0 else { return nil }
     return SelectedWordHighlight.scan(selection: nsText.substring(with: range), in: text)
 }

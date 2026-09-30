@@ -140,11 +140,18 @@ final class RecoveryStore {
         entries = next
     }
 
+    /// 只给写入方立墓碑，不动任何条目：标签结束时条目可能已经换了主人（同名的新标签刚写过它），
+    /// 这时不能删 —— 但去抖窗口里仍然可能有一笔属于这个写入方的在途写入，必须挡住
+    func tombstone(writer: UUID) {
+        retiredWriters.insert(writer)
+    }
+
     /// 标签结束（关闭标签、正常退出确认后、另存为绑定文件）：移除条目并给写入方立墓碑。
     /// 调用方已经取消了这个标签的订阅，但去抖窗口里可能仍有一笔写入排在删除之后 ——
-    /// 墓碑是这一笔的兜底：没有它，用户已经丢弃的内容会在一两次启动之间复活
+    /// 墓碑是这一笔的兜底：没有它，用户已经丢弃的内容会在一两次启动之间复活。
+    /// 调用方必须先确认条目归这个标签所有（另一端见 `tombstone(writer:)`）
     func retire(title: String, writer: UUID) {
-        retiredWriters.insert(writer)
+        tombstone(writer: writer)
         remove(title: title)
     }
 

@@ -144,7 +144,8 @@ enum FindEngine {
 enum UntitledTitle {
     static let prefix = "新文件"
 
-    /// 下一个标题：`titles` 是当前已打开标签的展示名
+    /// 下一个标题：`titles` 是当前所有标签的未标题标题（已绑定文件的标签也要传进来，
+    /// 它的标题在关闭前一直占位，否则序号会被下一个新标签复用）
     static func next(after titles: [String]) -> String {
         "\(prefix)\(maxSequence(in: titles) + 1)"
     }

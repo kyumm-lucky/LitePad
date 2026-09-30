@@ -334,8 +334,9 @@ private final class SettingsAnchorState: ObservableObject {
     @Published var anchor: CGRect = .zero
 }
 
-/// 列表内的悬停行；同样不能用 @State
-private final class SettingsIndexHoverState: ObservableObject {
+/// 列表内的悬停行；同样不能用 @State。
+/// 不设 private：保存清理排除表已拆到 `SaveCleanupExclusionView.swift`，同模块共用这一个
+final class SettingsIndexHoverState: ObservableObject {
     @Published var index: Int?
 }
 
@@ -727,93 +728,7 @@ private struct GeneralSettingsPane: View {
     }
 }
 
-/// 保存时清理的按语法排除表：勾中的语法在保存时保留原样
-/// （Markdown 的行尾双空格是硬换行、补丁文件的空行有意义，这类格式不能删行尾空白）
-private struct SaveCleanupExclusionList: View {
-    @ObservedObject private var settings = AppSettings.shared
-    @StateObject private var hover = SettingsIndexHoverState()
-
-    var body: some View {
-        let languages = LanguageDefinition.all
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 7) {
-                Image(systemName: "checkmark.square")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(InterfaceStyle.accent)
-                Text("不清理这些语法")
-                    .font(.system(size: 11, weight: .semibold))
-                Spacer(minLength: 0)
-                Text("\(settings.saveCleanupExcludedLanguageIDs.count)/\(languages.count)")
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
-                    .foregroundStyle(InterfaceStyle.muted)
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
-
-            Rectangle()
-                .fill(InterfaceStyle.border)
-                .frame(height: 1)
-                .padding(.horizontal, 8)
-
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 2) {
-                    ForEach(languages.indices, id: \.self) { index in
-                        let language = languages[index]
-                        Button {
-                            settings.setSaveCleanupExcluded(!settings.isSaveCleanupExcluded(language),
-                                                            for: language)
-                        } label: {
-                            row(language, index: index)
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hover.index = $0 ? index : nil }
-                    }
-                }
-                .padding(6)
-            }
-        }
-        .frame(width: 300, height: 150, alignment: .topLeading)
-        .background(FrostedSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous)))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
-        )
-    }
-
-    /// 一行语法：勾选框 + 语法名 + 归属的扩展名（落到该语法的文件都会受影响）
-    private func row(_ language: LanguageDefinition, index: Int) -> some View {
-        let excluded = settings.isSaveCleanupExcluded(language)
-        return HStack(spacing: 7) {
-            Image(systemName: excluded ? "checkmark.square.fill" : "square")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(excluded ? InterfaceStyle.accent : InterfaceStyle.muted)
-            Text(language.displayName)
-                .font(.system(size: 11, weight: excluded ? .medium : .regular))
-                .foregroundStyle(excluded ? .primary : InterfaceStyle.muted)
-                .lineLimit(1)
-            Text(language.extensions.joined(separator: " / "))
-                .font(.system(size: 9))
-                .foregroundStyle(InterfaceStyle.muted)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
-        }
-        .frame(minHeight: 26)
-        .padding(.horizontal, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(excluded
-                      ? InterfaceStyle.accentSoft
-                      : (hover.index == index ? InterfaceStyle.raised : Color.clear))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(excluded ? InterfaceStyle.accentBorder : Color.clear, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-    }
-}
+/// 保存时清理的按语法排除表在 `SaveCleanupExclusionView.swift`
 
 // MARK: - 外观
 
@@ -1016,8 +931,8 @@ private struct WindowSettingsPane: View {
                             .textFieldStyle(.plain)
                             .settingsFieldFrame(width: 52)
                             .multilineTextAlignment(.trailing)
-                        SettingsStepper(onIncrement: { bumpIndentWidth(1) },
-                                        onDecrement: { bumpIndentWidth(-1) })
+                        SettingsStepper(onIncrement: { settings.stepIndentWidth(by: 1) },
+                                        onDecrement: { settings.stepIndentWidth(by: -1) })
                         Text("个字符").font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(.leading, 18)
@@ -1114,11 +1029,6 @@ private struct WindowSettingsPane: View {
 
     private func bumpExtraScroll(_ delta: Double) {
         settings.extraScrollPercent = min(100, max(0, settings.extraScrollPercent + delta))
-    }
-
-    /// 缩进宽度收敛到可配置区间：输入框可以填任意整数，微调按钮落在区间内
-    private func bumpIndentWidth(_ delta: Int) {
-        settings.stepIndentWidth(by: delta)
     }
 }
 

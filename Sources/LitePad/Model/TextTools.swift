@@ -61,11 +61,15 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 是否有方向档位：行操作一项操作一个按钮，哈希与 UUID 只有一种动作
+    /// 是否有方向档位：行操作一项操作一个按钮，哈希与 UUID 只有一种动作。
+    /// 逐项列出、不留 default：将来新增工具漏列时在编译期报错，
+    /// 不会被静默当成「有方向档」而多渲染出一组用不上的分段控件
     var hasDirection: Bool {
         switch self {
-        case .lines, .hash, .uuid: return false
-        default: return true
+        case .unicode, .ascii, .url, .base64, .json, .diff, .timestamp, .html:
+            return true
+        case .lines, .hash, .uuid:
+            return false
         }
     }
 

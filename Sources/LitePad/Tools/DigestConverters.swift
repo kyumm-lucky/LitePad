@@ -110,8 +110,14 @@ enum TimestampConverter {
         guard let date = date(from: trimmed) else {
             return .failure("不是有效的本地时间：可用 \(sampleLocalTime)、2024/01/02 03:04:05 或 2024-01-02T03:04:05Z 这类写法")
         }
-        let milliseconds = Int64((date.timeIntervalSince1970 * 1000).rounded())
-        return .success(timestampText(milliseconds: milliseconds, unit: unit))
+        // 与反向路径同一口径的护栏：极端日期换算成毫秒后可能超出 Int64 的可表示范围，
+        // 直接构造会 trap（整个进程崩掉）；这里按「超出可表示的日期范围」拒绝
+        let milliseconds = (date.timeIntervalSince1970 * 1000).rounded()
+        guard milliseconds >= minMilliseconds, milliseconds < maxMilliseconds,
+              let whole = Int64(exactly: milliseconds) else {
+            return .failure("时间超出可表示的日期范围（0001 - 9999 年）")
+        }
+        return .success(timestampText(milliseconds: whole, unit: unit))
     }
 
     /// 「现在」：asTimestamp 为真时给时间戳（按档位），为假时给本地时间字符串。

@@ -90,10 +90,11 @@ LitePad/
 │       ├── ContentView.swift      # 标签栏 + 编辑区 + 状态栏
 │       ├── TabBarView.swift       # 页内标签栏（含标签右键菜单）
 │       ├── Settings/SettingsView.swift # 设置抽屉
+│       ├── Settings/SaveCleanupExclusionView.swift # 保存时清理的按语法排除表
 │       ├── OptionPanelView.swift  # 窗口内下拉面板（状态栏 / 工具 / 设置页共用样式与点击层）
 │       ├── FindPanelView.swift    # 查找 / 替换面板
 │       └── Tools/
-│           └── ToolsPanelView.swift    # 工具抽屉：右缘通栏 + 左缘拖拽调宽，十个工具
+│           └── ToolsPanelView.swift    # 工具抽屉：右缘通栏 + 左缘拖拽调宽，十一个工具
 ├── Resources/Info.plist           # App 包描述（由打包脚本使用）
 ├── Resources/AppIcon.icns         # 应用图标（scripts/make-icon.swift 生成）
 ├── scripts/make-app.sh            # 编译并组装 .app
