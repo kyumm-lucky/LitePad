@@ -43,7 +43,7 @@ final class PrintController: NSObject {
 
     /// 本次打印的打印信息：复制共享的全局打印信息后再按文稿情况调整——共享对象归系统与
     /// 后续打印共用，直接改它会污染下一次打印与页面设置
-    func makePrintInfo() -> NSPrintInfo {
+    private func makePrintInfo() -> NSPrintInfo {
         let printInfo = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
         printInfo.leftMargin = Self.pageMargin
         printInfo.rightMargin = Self.pageMargin
@@ -63,7 +63,7 @@ final class PrintController: NSObject {
     /// 专供打印的文本视图：正文用编辑器字体、强制深色，视图不画背景，也没有任何装饰层。
     /// 宽度取可打印宽度（纸张宽度减左右页边距）；高度在排版后按实际内容给——打印分页按
     /// 视图高度切页，高度不够末尾内容会被丢掉（与编辑器里必须放开 maxSize 是同一个道理）
-    func makePrintView(text: String, printInfo: NSPrintInfo) -> NSTextView {
+    private func makePrintView(text: String, printInfo: NSPrintInfo) -> NSTextView {
         let width = max(1, printInfo.paperSize.width - printInfo.leftMargin - printInfo.rightMargin)
         let font = AppSettings.shared.editorFont
         let storage = NSTextStorage(string: text)
@@ -105,7 +105,8 @@ final class PrintController: NSObject {
         let style = NSMutableParagraphStyle()
         let spaceWidth = (" " as NSString).size(withAttributes: [.font: font]).width
         style.tabStops = []
-        style.defaultTabInterval = spaceWidth * CGFloat(IndentRules.clampedWidth(AppSettings.shared.indentWidth))
+        style.defaultTabInterval = IndentRules.tabInterval(spaceWidth: spaceWidth,
+                                                           width: AppSettings.shared.indentWidth)
         return style
     }
 

@@ -40,13 +40,11 @@ struct OptionPanel: View {
     static let rowSpacing: CGFloat = 2
     /// 表头、分隔线与内外边距合计高度。取整偏大，让宿主判断空间时留有余量
     static let chromeHeight: CGFloat = 46
-    /// 动作区的合计高度：上方分隔线 + 一行动作行 + 两处行距，与 chromeHeight 同一口径（取整偏大；
-    /// 动作的说明文字若换行会比这里高一点，状态栏面板自下而上生长，多出的十几点不影响定位）
-    static let actionAreaHeight: CGFloat = rowSpacing + 1 + rowSpacing + rowHeight
-
-    /// 面板完整展开的高度：宿主据此决定向上还是向下展开；有动作区时一并算进去
-    static func estimatedHeight(optionCount: Int, hasAction: Bool = false) -> CGFloat {
-        chromeHeight + rowsHeight(optionCount: optionCount) + (hasAction ? actionAreaHeight : 0)
+    /// 面板完整展开的高度：宿主据此决定向上还是向下展开。
+    /// 只算选项区：当前带底部动作区的面板（状态栏编码下拉）是内联 SwiftUI 视图、自下而上生长，
+    /// 不走这套估算；将来若有宿主给带动作的面板估高，需要把动作区高度一并算进来
+    static func estimatedHeight(optionCount: Int) -> CGFloat {
+        chromeHeight + rowsHeight(optionCount: optionCount)
     }
 
     static func rowsHeight(optionCount: Int) -> CGFloat {

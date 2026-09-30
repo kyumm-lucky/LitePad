@@ -27,9 +27,10 @@ enum RecentFiles {
         return list
     }
 
-    /// 清空全部记录（R12）；下次启动也不再有旧条目
+    /// 清空全部记录（R12）；下次启动也不再有旧条目。
+    /// 走 `save` 这条唯一写入口，不另开一条直写 UserDefaults 的路径
     static func clear() {
-        UserDefaults.standard.removeObject(forKey: key)
+        save([])
     }
 
     private static func save(_ list: [URL]) {

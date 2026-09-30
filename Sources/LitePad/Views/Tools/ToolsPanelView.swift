@@ -686,9 +686,9 @@ private struct LineOperationsSection: View {
         .animation(Motion.control, value: tools.lineOperation)
     }
 
-    /// 注释类操作要求当前语法有行注释符号（与菜单项的置灰口径一致）
+    /// 注释类操作要求当前语法有行注释符号：与菜单项共用会话里的同一份判定，不各写一份
     private func isAvailable(_ kind: LineOperationKind) -> Bool {
-        !kind.requiresLineComment || tab.language.lineComment != nil
+        session.isLineOperationAvailable(kind)
     }
 
     private var resultDetail: String {

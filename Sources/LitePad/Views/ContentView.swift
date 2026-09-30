@@ -125,6 +125,8 @@ struct ContentView: View {
                 session.openDroppedFiles(urls)
                 return true
             } isTargeted: { targeted in
+                // 同值不写：@Published 没有等值闸门，重复赋值会让整窗白跑一遍布局与高亮重建
+                guard dropState.isTargeted != targeted else { return }
                 dropState.isTargeted = targeted
             }
             .overlay { dropHighlight }

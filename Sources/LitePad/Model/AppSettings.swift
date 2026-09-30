@@ -182,6 +182,11 @@ final class AppSettings: ObservableObject {
         editorFontSize = Self.defaultEditorFontSize
     }
 
+    /// 按步进调整缩进宽度并收敛到可配置区间：设置页的微调按钮与字号走同一套写法
+    func stepIndentWidth(by delta: Int) {
+        indentWidth = IndentRules.clampedWidth(indentWidth + delta)
+    }
+
     /// 字体选择框的展示名；系统内置等宽字体的内部名不适合展示
     var editorFontDisplayName: String {
         editorFont.fontName.hasPrefix(".") ? "系统等宽" : (editorFont.displayName ?? editorFontName)

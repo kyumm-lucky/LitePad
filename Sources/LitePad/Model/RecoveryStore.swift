@@ -189,14 +189,14 @@ final class RecoveryStore {
     private static func load(from fileURL: URL) -> [String: RecoveryEntry] {
         guard let data = try? Data(contentsOf: fileURL),
               let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let rawEntries = root["entries"] as? [Any] else { return [:] }
+              let rawEntries = root[Key.entries] as? [Any] else { return [:] }
 
         var loaded: [String: RecoveryEntry] = [:]
         for raw in rawEntries {
             guard let item = raw as? [String: Any],
-                  let title = item["title"] as? String, !title.isEmpty,
-                  let seconds = item["savedAt"] as? Double,
-                  let text = item["text"] as? String, !text.isEmpty else { continue }
+                  let title = item[Key.title] as? String, !title.isEmpty,
+                  let seconds = item[Key.savedAt] as? Double,
+                  let text = item[Key.text] as? String, !text.isEmpty else { continue }
             let entry = RecoveryEntry(title: title, text: text,
                                       savedAt: Date(timeIntervalSince1970: seconds))
             // 同一标题出现多条（文件被手改过 / 旧版本留下）时留最新的那条
@@ -229,10 +229,23 @@ final class RecoveryStore {
         let title: String
         let savedAt: Double
         let text: String
+
+        enum CodingKeys: String, CodingKey { case title, savedAt, text }
     }
 
     private struct FileContent: Encodable {
         let version: Int
         let entries: [FileEntry]
+
+        enum CodingKeys: String, CodingKey { case version, entries }
+    }
+
+    /// 读侧的键名取自写侧的 `CodingKeys`：两边各写一份字面量时，改名会让读侧静默解析成
+    /// 空恢复区（旧内容既看不出来、也会被下一次写盘抹掉），这里把单侧改名的风险掐掉
+    private enum Key {
+        static let entries = FileContent.CodingKeys.entries.rawValue
+        static let title = FileEntry.CodingKeys.title.rawValue
+        static let savedAt = FileEntry.CodingKeys.savedAt.rawValue
+        static let text = FileEntry.CodingKeys.text.rawValue
     }
 }

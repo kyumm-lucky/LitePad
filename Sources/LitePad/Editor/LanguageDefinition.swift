@@ -141,6 +141,13 @@ enum IndentRules {
         min(widthRange.upperBound, max(widthRange.lowerBound, raw))
     }
 
+    /// 制表位的间隔：空格宽度 × 缩进宽度。编辑器的段落样式与打印副本都用它，
+    /// 「真实制表符的显示宽度」与「缩进指示线的一级宽度」因此共用同一把尺子（KTD10）。
+    /// 纯算术：空格宽度由调用方按自己的字体量出来
+    static func tabInterval(spaceWidth: CGFloat, width: Int) -> CGFloat {
+        spaceWidth * CGFloat(clampedWidth(width))
+    }
+
     /// 一级缩进的字符串：插入空格时是缩进宽度个空格，否则是一个制表符
     /// （制表符的显示宽度由编辑器按同一缩进宽度设置的制表位保证，见 CodeTextView 的外观应用）
     static func unit(width: Int, insertSpaces: Bool) -> String {

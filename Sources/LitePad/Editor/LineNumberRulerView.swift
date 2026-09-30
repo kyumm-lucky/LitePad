@@ -35,8 +35,11 @@ final class LineNumberRulerView: NSRulerView {
               let layoutManager = textView.layoutManager,
               let container = textView.textContainer else { return }
 
-        // 行号栏的用色按当前外观从主题解析：主题换侧或系统深浅切换后重画即得新色
-        let palette = EditorPalette.resolve(AppSettings.shared.syntaxTheme, for: effectiveAppearance)
+        // 行号栏的用色按当前外观从主题解析：主题换侧或系统深浅切换后重画即得新色。
+        // 主题取装饰层里那份配置（编辑器按设置同步过来），两处不各读一次设置、将来也不会分化
+        let theme = (layoutManager as? DecorationsLayoutManager)?.appearance?.syntaxTheme
+            ?? AppSettings.shared.syntaxTheme
+        let palette = EditorPalette.resolve(theme, for: effectiveAppearance)
         let bounds = self.bounds
         gutterColor.setFill()
         bounds.fill()

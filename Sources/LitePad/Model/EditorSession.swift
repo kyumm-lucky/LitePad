@@ -18,8 +18,8 @@ final class EditorSession: ObservableObject {
     /// 主窗口左侧设置抽屉是否展开
     @Published var isSettingsPresented = false
     /// 是否有文件正被拖在窗口上（驱动接收提示）：编辑区由编辑视图在 AppKit 层上报，
-    /// 标签栏与状态栏由主栏的投放目标上报
-    @Published var isFileDropTargeted = false
+    /// 标签栏与状态栏由主栏的投放目标上报。只经 `setFileDropTargeted` 写
+    @Published private(set) var isFileDropTargeted = false
     /// 工具抽屉的实时宽度：拖拽调宽逐帧更新，松手才落盘（同时供下拉面板避让抽屉）
     @Published var toolsDrawerWidth = CGFloat(AppSettings.defaultToolsPanelWidth(for: .unicode))
     /// 工具面板的输入 / 选项 / 结果
@@ -85,7 +85,10 @@ final class EditorSession: ObservableObject {
         tabs.append(tab)
         selectedTabIndex = tabs.count - 1
         installAutosave(for: tab)
-        installRecovery(for: tab)
+        // 恢复区只承载未标题文稿：文件标签永不写恢复区，不必为它常驻一条去抖管线
+        if tab.untitledTitle != nil {
+            installRecovery(for: tab)
+        }
     }
 
     /// 建一张未标题标签并纳入会话：标题在这里统一分配（R8 / KD4），
@@ -174,6 +177,13 @@ final class EditorSession: ObservableObject {
     func clearRecentFiles() {
         RecentFiles.clear()
         recentFiles = []
+    }
+
+    /// 拖入提示的开关：同值不写 —— @Published 没有等值闸门，而一次拖放结束通常会连着
+    /// 上报 exited 与 ended 两次，重复赋值会让整窗白跑一遍布局与高亮重建
+    func setFileDropTargeted(_ active: Bool) {
+        guard isFileDropTargeted != active else { return }
+        isFileDropTargeted = active
     }
 
     /// 拖入文件的统一入口：编辑区与主栏的投放都走这里。
@@ -292,20 +302,27 @@ final class EditorSession: ObservableObject {
         let targets = Array(Set(indices)).sorted().compactMap { tabs.indices.contains($0) ? tabs[$0] : nil }
         guard !targets.isEmpty else { return }
 
-        for tab in targets where tab.isDirty {
-            switch confirmSave(of: tab) {
-            case .save:
-                guard save(tab: tab) else { return } // 保存被取消 / 失败：整轮中止
-            case .discard:
-                break
-            case .cancel:
-                return
-            }
-        }
+        guard confirmDirtyTabs(targets) else { return }
         finalizeClosedTabs(targets)
         if let tab, let index = tabs.firstIndex(where: { $0 === tab }) {
             selectedTabIndex = index
         }
+    }
+
+    /// 逐个确认有改动的标签：任一取消（含保存面板被取消、写盘失败）即中止，
+    /// 返回是否全部通过。关闭族与退出保护共用这一份确认循环，各自只负责通过之后的终态动作
+    private func confirmDirtyTabs(_ tabs: [EditorTab]) -> Bool {
+        for tab in tabs where tab.isDirty {
+            switch confirmSave(of: tab) {
+            case .save:
+                guard save(tab: tab) else { return false } // 保存被取消 / 失败：整轮中止
+            case .discard:
+                break
+            case .cancel:
+                return false
+            }
+        }
+        return true
     }
 
     func saveSelectedTab() {
@@ -620,18 +637,9 @@ final class EditorSession: ObservableObject {
     }
 
     /// 退出前的未保存保护：逐个确认有更改的标签，任一标签被取消（含保存面板被取消、
-    /// 写盘失败）即中止退出。与 closeTab 共用同一套确认与保存流程，保证两个入口语义一致
+    /// 写盘失败）即中止退出。与 closeTab 共用确认循环，保证两个入口语义一致
     func confirmTermination() -> Bool {
-        for tab in tabs where tab.isDirty {
-            switch confirmSave(of: tab) {
-            case .save:
-                guard save(tab: tab) else { return false } // 保存被取消 / 失败则不退出
-            case .discard:
-                break
-            case .cancel:
-                return false
-            }
-        }
+        guard confirmDirtyTabs(tabs) else { return false }
         // 全部确认通过：本次运行的未标题内容到此离开恢复区（HTD 的「正常退出」出口）。
         // 逐个确认期间一条都不动——取消退出时现场必须与发起前一致（KTD17）
         for tab in tabs {
@@ -672,10 +680,7 @@ final class EditorSession: ObservableObject {
     /// 失败返回原因且保持原样，由调用方静默处理——自动发生的重载失败不该弹模态框打断用户
     private func reload(tab: EditorTab, from url: URL) -> ReloadFailure? {
         // 整串改动与显式重读同一落点：有视图就经它走撤销协议（KTD14），没视图才改模型文本
-        loadBaseline(into: tab, from: url, strategy: .tolerant) { [weak self, weak tab] newText in
-            guard let self, let tab else { return false }
-            return self.replaceWholeText(newText, in: tab)
-        }
+        loadBaseline(into: tab, from: url, strategy: .tolerant)
     }
 
     // MARK: - 按编码重读（R5）
@@ -703,11 +708,7 @@ final class EditorSession: ObservableObject {
             }
         }
         // 用户指定的编码走严格解码：选择错了就报错，绝不宽容兜底成一篇看似合法的乱码
-        let failure = loadBaseline(into: tab, from: url, strategy: .strict(encoding),
-                                   replaceText: { [weak tab] newText in
-                                       guard let tab else { return false }
-                                       return replaceWholeText(newText, in: tab)
-                                   })
+        let failure = loadBaseline(into: tab, from: url, strategy: .strict(encoding))
         guard let failure else { return }
         // 失败时不把指定编码留在保存编码上（KTD4：不把指定编码绑成保存编码）：这个编码已经证明
         // 读不通这个文件，留着它只会让下一次显式保存把认得出的正文改写成另一个编码的字节
@@ -730,10 +731,9 @@ final class EditorSession: ObservableObject {
     /// 显式重读与外部改动重载共用它——任何建立「保存基准」的转换都必须可失败。
     /// 失败返回原因，且标签的内容、编码、脏标记三者一律不变：错误解码出来的正文一旦成为
     /// 新的干净基准，下一次敲键或自动写盘就会把乱码覆盖回原文件。
-    /// `strategy` 决定解码口径；`replaceText` 是正文替换的落点，返回 false 表示落点拒绝替换
+    /// `strategy` 决定解码口径；正文替换经 `replaceWholeText` 落到视图或模型（KTD14）
     private func loadBaseline(into tab: EditorTab, from url: URL,
-                              strategy: DecodeStrategy,
-                              replaceText: (String) -> Bool) -> ReloadFailure? {
+                              strategy: DecodeStrategy) -> ReloadFailure? {
         let data: Data
         do {
             data = try Data(contentsOf: url)
@@ -756,7 +756,7 @@ final class EditorSession: ObservableObject {
         guard decoded.encoding.roundTrips(decoded.text, with: data) else {
             return .roundTripMismatch(decoded.encoding)
         }
-        guard replaceText(decoded.text) else { return .replaceRejected }
+        guard replaceWholeText(decoded.text, in: tab) else { return .replaceRejected }
 
         tab.encoding = decoded.encoding
         tab.lineEnding = LineEnding.detect(in: decoded.text)

@@ -26,9 +26,17 @@ enum HashDigest {
     /// 计算摘要：默认小写，与 `md5` / `shasum` / `openssl dgst` 的输出口径一致
     static func hex(_ text: String, algorithm: HashAlgorithm, uppercase: Bool) -> String {
         let digest = digestBytes(Data(text.utf8), algorithm: algorithm)
-        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        // 逐字节查表拼十六进制：摘要长度固定，逐字节 String(format:) 会为 SHA-512 造 64 个临时字符串
+        var hex = ""
+        hex.reserveCapacity(digest.count * 2)
+        for byte in digest {
+            hex.append(Self.hexDigits[Int(byte >> 4)])
+            hex.append(Self.hexDigits[Int(byte & 0x0F)])
+        }
         return uppercase ? hex.uppercased() : hex
     }
+
+    private static let hexDigits = Array("0123456789abcdef")
 
     private static func digestBytes(_ data: Data, algorithm: HashAlgorithm) -> [UInt8] {
         switch algorithm {
@@ -42,9 +50,6 @@ enum HashDigest {
 
 /// UUID 生成（R24）：用 Foundation 的标识类型，输出 8-4-4-4-12 的标准写法
 enum UUIDGenerator {
-    /// 生成一个新的标识
-    static func generate() -> UUID { UUID() }
-
     /// 排版输出：默认小写（代码与 URL 里的常见写法），大写便于贴进 SQL 一类场景
     static func format(_ value: UUID, uppercase: Bool) -> String {
         uppercase ? value.uuidString : value.uuidString.lowercased()

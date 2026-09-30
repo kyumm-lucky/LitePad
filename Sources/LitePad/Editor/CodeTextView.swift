@@ -127,7 +127,7 @@ struct CodeTextView: NSViewRepresentable {
         // 拖入 / 离开驱动接收提示，投放把地址交给会话的统一打开入口
         textView.registerForDraggedTypes([.fileURL])
         textView.onFileDragActive = { [weak session] active in
-            session?.isFileDropTargeted = active
+            session?.setFileDropTargeted(active)
         }
         textView.onFileDrop = { [weak session] urls in
             session?.openDroppedFiles(urls)
@@ -213,6 +213,8 @@ struct CodeTextView: NSViewRepresentable {
         fileprivate var appliedHighlight = HighlightSnapshot()
         /// 已应用到文本视图的外观配置；变化时才重设整篇属性
         var appliedAppearance: EditorAppearanceConfig?
+        /// 上次重跑高亮时用的外观：外观变化钩子可能在没换侧的时机被调用，同侧就不必重跑
+        var appliedAppearanceName: NSAppearance.Name?
 
         init(tab: EditorTab) {
             self.tab = tab
@@ -260,7 +262,8 @@ struct CodeTextView: NSViewRepresentable {
             // tabStops 必须先清空：段落样式自带一组 28 点默认制表位，非空时 defaultTabInterval 不生效
             let spaceWidth = (" " as NSString).size(withAttributes: [.font: font]).width
             paragraph.tabStops = []
-            paragraph.defaultTabInterval = spaceWidth * CGFloat(max(1, config.indentWidth))
+            paragraph.defaultTabInterval = IndentRules.tabInterval(spaceWidth: spaceWidth,
+                                                                   width: config.indentWidth)
             textView.defaultParagraphStyle = paragraph
             textView.typingAttributes[.font] = font
             textView.typingAttributes[.paragraphStyle] = paragraph
@@ -388,8 +391,13 @@ struct CodeTextView: NSViewRepresentable {
 
         /// 外观变化（系统深浅切换 / 外观模式切换）后的落点：语法色是写进文本存储的具体色值，
         /// 装饰层与行号栏的取色也都是按外观解析的，三者都要按新外观重取（KTD6）。
-        /// 外观配置本身没有变化，走不到 applyAppearanceIfNeeded，必须由外观变化钩子显式重跑
+        /// 外观配置本身没有变化，走不到 applyAppearanceIfNeeded，必须由外观变化钩子显式重跑。
+        /// 钩子也可能在视图挂进窗口等时机被调用，而那时外观并没有真的换侧——同侧直接返回，
+        /// 免得白跑一遍全文高亮
         func applyAppearanceChange(textView: NSTextView) {
+            let appearance = textView.effectiveAppearance.name
+            guard appearance != appliedAppearanceName else { return }
+            appliedAppearanceName = appearance
             SyntaxHighlighter.highlight(textView: textView, language: tab.language)
             rebuildHighlights(textView: textView)
             textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true

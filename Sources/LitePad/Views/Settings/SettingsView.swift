@@ -1118,7 +1118,7 @@ private struct WindowSettingsPane: View {
 
     /// 缩进宽度收敛到可配置区间：输入框可以填任意整数，微调按钮落在区间内
     private func bumpIndentWidth(_ delta: Int) {
-        settings.indentWidth = IndentRules.clampedWidth(settings.indentWidth + delta)
+        settings.stepIndentWidth(by: delta)
     }
 }
 

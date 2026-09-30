@@ -296,7 +296,11 @@ final class LiteTextView: NSTextView {
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard droppedFileURLs(sender) != nil else { return super.draggingUpdated(sender) }
+        // 这里只判「是不是文件投放」，不解码地址：draggingUpdated 在指针移动期间高频回调，
+        // 每次 readObjects 都要读粘贴板并构造数组；解码留给真正落下的 performDragOperation
+        guard sender.draggingPasteboard.availableType(from: [.fileURL]) != nil else {
+            return super.draggingUpdated(sender)
+        }
         return .copy
     }
 

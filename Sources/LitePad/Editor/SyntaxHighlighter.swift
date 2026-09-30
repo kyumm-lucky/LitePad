@@ -153,7 +153,8 @@ enum SyntaxHighlighter {
         storage.addAttribute(.foregroundColor, value: palette.base, range: fullRange)
 
         guard let language, !language.isPlain else { return }
-        let source = storage.string as NSString
+        // 正文取一次交给全部规则：每条规则各自 `as String` 桥接一遍，一次高亮要跑六到九条规则
+        let source = storage.string
 
         if let (start, end) = blockComment(of: language) {
             apply(to: storage, source: source,
@@ -214,14 +215,14 @@ enum SyntaxHighlighter {
     /// 这个「已着色」判定必须拿同一份主题基色来比——写进存储的是主题解析后的具体色值，
     /// 拿别的基色比会把全部区段都当成已着色，规则优先级随之失效（KTD6）
     private static func apply(to storage: NSTextStorage,
-                              source: NSString,
+                              source: String,
                               pattern: String,
                               options: NSRegularExpression.Options,
                               color: NSColor,
                               base: NSColor) {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
-        let fullRange = NSRange(location: 0, length: source.length)
-        regex.enumerateMatches(in: source as String, options: [], range: fullRange) { match, _, _ in
+        let fullRange = NSRange(location: 0, length: source.utf16.count)
+        regex.enumerateMatches(in: source, options: [], range: fullRange) { match, _, _ in
             guard let match,
                   match.range.location != NSNotFound,
                   match.range.length > 0 else { return }
