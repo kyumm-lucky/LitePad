@@ -45,6 +45,9 @@ struct ContentView: View {
             if let tab = session.selectedTab {
                 WindowTitleSync(tab: tab)
             }
+            WindowSizeSync(width: settings.windowWidth, height: settings.windowHeight)
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
 
             if session.expandedMenu != nil {
                 // 覆盖全窗口的透明点击层：光标为箭头，点面板外任意位置收起面板
@@ -276,6 +279,95 @@ private struct WindowTitleSync: View {
     }
 }
 
+/// 设置页填了窗口宽 / 高时，把尺寸施加到宿主窗口：改设置立即生效，下次打开也用这份尺寸。
+/// 两项都空（自动）时不插手，沿用系统记住的 frame。
+/// 取值按内容区（与场景 `.defaultSize` / `.frame(minWidth:minHeight:)` 同一口径），不含标题栏
+private struct WindowSizeSync: NSViewRepresentable {
+    var width: Int?
+    var height: Int?
+
+    func makeNSView(context: Context) -> WindowSizeNSView {
+        WindowSizeNSView()
+    }
+
+    func updateNSView(_ view: WindowSizeNSView, context: Context) {
+        view.updateConfiguration(width: width, height: height)
+    }
+}
+
+private final class WindowSizeNSView: NSView {
+    var configuredWidth: Int?
+    var configuredHeight: Int?
+    private var lastApplied: (CGFloat, CGFloat)?
+    private var pending: DispatchWorkItem?
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyIfNeeded(debounce: false)
+    }
+
+    func updateConfiguration(width: Int?, height: Int?) {
+        let changed = configuredWidth != width || configuredHeight != height
+        configuredWidth = width
+        configuredHeight = height
+        if changed {
+            applyIfNeeded(debounce: true)
+        }
+    }
+
+    func applyIfNeeded(debounce: Bool) {
+        guard window != nil else { return }
+        pending?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.apply() }
+        pending = work
+        if debounce {
+            // 输入框逐字写入，等停手再改窗口，避免 1 → 12 → 120 → 1200 连拉四次
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        } else {
+            // 等系统先按场景恢复历史 frame，再按设置盖上去
+            DispatchQueue.main.async(execute: work)
+        }
+    }
+
+    private func apply() {
+        guard let window else { return }
+        guard configuredWidth != nil || configuredHeight != nil else {
+            lastApplied = nil
+            return
+        }
+        let currentContent = window.contentRect(forFrameRect: window.frame)
+        let minWidth = window.contentMinSize.width > 0 ? window.contentMinSize.width : 760
+        let minHeight = window.contentMinSize.height > 0 ? window.contentMinSize.height : 480
+        var targetWidth = configuredWidth.map { max(minWidth, CGFloat($0)) } ?? currentContent.width
+        var targetHeight = configuredHeight.map { max(minHeight, CGFloat($0)) } ?? currentContent.height
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+            let chromeW = window.frame.width - currentContent.width
+            let chromeH = window.frame.height - currentContent.height
+            targetWidth = min(targetWidth, max(minWidth, visible.width - chromeW))
+            targetHeight = min(targetHeight, max(minHeight, visible.height - chromeH))
+        }
+        if let last = lastApplied,
+           abs(last.0 - targetWidth) < 0.5,
+           abs(last.1 - targetHeight) < 0.5 {
+            return
+        }
+        var content = currentContent
+        content.origin.y += currentContent.height - targetHeight
+        content.size = NSSize(width: targetWidth, height: targetHeight)
+        var frame = window.frameRect(forContentRect: content)
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+            if frame.maxX > visible.maxX { frame.origin.x = visible.maxX - frame.width }
+            if frame.maxY > visible.maxY { frame.origin.y = visible.maxY - frame.height }
+            if frame.minX < visible.minX { frame.origin.x = visible.minX }
+            if frame.minY < visible.minY { frame.origin.y = visible.minY }
+        }
+        window.setFrame(frame, display: true)
+        lastApplied = (targetWidth, targetHeight)
+    }
+}
+
 private struct StatusBarView: View {
     @ObservedObject var tab: EditorTab
     @ObservedObject private var settings = AppSettings.shared
@@ -307,9 +399,13 @@ private struct StatusBarView: View {
             }
             Spacer()
             Text(tab.isDirty ? "未保存" : "-")
-            StatusBarMenu(label: tab.language.displayName, onOpen: { onOpen(.language) })
-            StatusBarMenu(label: tab.encoding.displayName, onOpen: { onOpen(.encoding) })
-            StatusBarMenu(label: tab.lineEnding.displayName, onOpen: { onOpen(.lineEnding) })
+            HStack(spacing: 0) {
+                StatusBarMenu(label: tab.language.displayName, onOpen: { onOpen(.language) })
+                statusBarMenuSeparator
+                StatusBarMenu(label: tab.encoding.displayName, onOpen: { onOpen(.encoding) })
+                statusBarMenuSeparator
+                StatusBarMenu(label: tab.lineEnding.displayName, onOpen: { onOpen(.lineEnding) })
+            }
         }
         .font(.system(size: 11).monospacedDigit())
         .foregroundStyle(InterfaceStyle.muted)
@@ -321,6 +417,12 @@ private struct StatusBarView: View {
                 .fill(InterfaceStyle.borderStrong)
                 .frame(height: 1)
         }
+    }
+
+    private var statusBarMenuSeparator: some View {
+        Text("｜")
+            .foregroundStyle(InterfaceStyle.muted)
+            .padding(.horizontal, 6)
     }
 }
 
@@ -370,11 +472,13 @@ private final class MenuButtonNSView: NSView {
     private func rebuildLabel() {
         let text = NSMutableAttributedString(string: label + "  ", attributes: [
             .font: NSFont.systemFont(ofSize: 11),
-            .foregroundColor: NSColor.labelColor,
+            .foregroundColor: NSColor.secondaryLabelColor,
         ])
+        let chevronConfig = NSImage.SymbolConfiguration(pointSize: 7, weight: .semibold)
+            .applying(.init(hierarchicalColor: .secondaryLabelColor))
         if let chevronImage = NSImage(systemSymbolName: "chevron.up.chevron.down",
                                       accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 7, weight: .semibold)) {
+            .withSymbolConfiguration(chevronConfig) {
             let chevronAttachment = NSTextAttachment()
             chevronAttachment.image = chevronImage
             text.append(NSAttributedString(attachment: chevronAttachment))
@@ -384,20 +488,21 @@ private final class MenuButtonNSView: NSView {
         needsDisplay = true
     }
 
+    override var isOpaque: Bool { false }
+
     override var intrinsicContentSize: NSSize {
-        labelAttributed.map { NSSize(width: $0.size().width + 16, height: max($0.size().height + 8, 24)) }
+        labelAttributed.map { NSSize(width: $0.size().width + 4, height: max($0.size().height + 2, 18)) }
             ?? NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 0, dy: 1)
-        let background = isHovered
-            ? NSColor.controlAccentColor.withAlphaComponent(0.12)
-            : NSColor.controlBackgroundColor
-        background.setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+        // 平时不铺底，露出状态栏背景；悬停才给一层浅强调色提示可点
+        if isHovered {
+            NSColor.controlAccentColor.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 6, yRadius: 6).fill()
+        }
 
-        labelAttributed?.draw(at: NSPoint(x: 8,
+        labelAttributed?.draw(at: NSPoint(x: 2,
                                           y: (bounds.height - (labelAttributed?.size().height ?? 0)) / 2))
     }
 

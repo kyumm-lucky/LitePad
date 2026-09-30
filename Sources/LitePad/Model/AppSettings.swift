@@ -215,7 +215,8 @@ final class AppSettings: ObservableObject {
 
     // MARK: - 窗口
 
-    /// 新窗口默认尺寸；nil 表示自动
+    /// 窗口尺寸；nil 表示自动（沿用系统记住的窗口 frame）。
+    /// 有值时由 WindowSizeSync 施加到当前窗口，并作为下次打开的尺寸
     @Published var windowWidth: Int? {
         didSet {
             if let windowWidth {
