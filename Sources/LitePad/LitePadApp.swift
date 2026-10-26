@@ -25,6 +25,9 @@ struct LitePadApp: App {
         // 「一个窗口 + 多个标签页」的模型，文件一律进标签，不开新窗口
         Window("LitePad", id: mainWindowID) {
             ContentView()
+                // 界面语言切换时整窗重建：菜单、面板与已显示文案都按新语言重算，
+                // 标签正文与选区存在模型里，重建不会丢
+                .id(settings.interfaceLanguage)
                 .environmentObject(session)
                 .frame(minWidth: 760, minHeight: 480)
                 .background(ReopenWindowBridge { appDelegate.reopenWindow = $0 })
@@ -48,57 +51,86 @@ struct LitePadApp: App {
                      height: CGFloat(settings.windowHeight ?? 480))
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("新建标签页") { session.newTab() }
+                Button(L10n.t("新建标签页")) { session.newTab() }
                     .keyboardShortcut("n", modifiers: .command)
-                Button("打开…") { session.openFile() }
+                Button(L10n.t("打开…")) { session.openFile() }
                     .keyboardShortcut("o", modifiers: .command)
-                Menu("打开最近") {
+                Menu(L10n.t("打开最近")) {
                     ForEach(session.recentFiles, id: \.absoluteString) { url in
                         Button(url.lastPathComponent) { session.openRecent(url) }
                     }
                     if !session.recentFiles.isEmpty {
                         Divider()
                     }
-                    Button("清空最近") { session.clearRecentFiles() }
+                    Button(L10n.t("清空最近")) { session.clearRecentFiles() }
                         .disabled(session.recentFiles.isEmpty)
                 }
-                Button("保存") { session.saveSelectedTab() }
+                Divider()
+                Button(L10n.t("打开文件夹…")) { session.chooseWorkspaceFolder() }
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                Button(L10n.t("关闭文件夹工作区")) { session.closeWorkspace() }
+                    .disabled(session.workspaceFolder == nil)
+                Button(L10n.t("保存")) { session.saveSelectedTab() }
                     .keyboardShortcut("s", modifiers: .command)
-                Button("另存为…") { session.saveAsSelectedTab() }
+                Button(L10n.t("另存为…")) { session.saveAsSelectedTab() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
-                Button("保存全部") { session.saveAll() }
-                Button("查找…") { session.toggleFind() }
+                Button(L10n.t("保存全部")) { session.saveAll() }
+                Button(L10n.t("查找…")) { session.toggleFind() }
                     .keyboardShortcut("f", modifiers: .command)
-                Button("跳转到行…") { session.goToLine() }
+                Button(L10n.t("查找下一个")) { session.findStep(1) }
+                    .keyboardShortcut("g", modifiers: .command)
+                Button(L10n.t("查找上一个")) { session.findStep(-1) }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
+                Button(L10n.t("跳转到行…")) { session.goToLine() }
                     .keyboardShortcut("l", modifiers: .command)
                 Divider()
-                Button("关闭标签页") { session.closeSelectedTab() }
+                Button(L10n.t("关闭标签页")) { session.closeSelectedTab() }
                     .keyboardShortcut("w", modifiers: .command)
                 // 不用框架自带的「全部关闭」：那一个关的是窗口，这里关的是全部标签
-                Button("关闭全部") { session.closeAllTabs() }
+                Button(L10n.t("关闭全部")) { session.closeAllTabs() }
             }
             // 打印（R22）：窗口场景不会自带打印项，用替换方式把「打印…」装进「文件」菜单；
             // 打印面板由 PrintController 以窗口内的表单呈现
             CommandGroup(replacing: .printItem) {
-                Button("打印…") {
+                Button(L10n.t("打印…")) {
                     guard let tab = session.selectedTab else { return }
                     PrintController.shared.printDocument(tab.text, jobName: tab.displayName)
                 }
                 .keyboardShortcut("p", modifiers: .command)
             }
             CommandGroup(replacing: .appSettings) {
-                Button("设置…") { session.toggleSettings() }
+                Button(L10n.t("设置…")) { session.toggleSettings() }
                     .keyboardShortcut(",", modifiers: .command)
             }
             // 行操作（R17）：跟在粘贴板分组之后，与编辑菜单里框架自带的那几项相邻而不重名。
             // 作用于选中行、无选区时作用于全文；没有行注释符号的语言其注释两项置灰
             CommandGroup(after: .pasteboard) {
                 Divider()
-                Menu("行操作") {
+                Menu(L10n.t("行操作")) {
                     ForEach(LineOperationKind.allCases) { kind in
                         Button(kind.displayName) { session.applyLineOperation(kind) }
                             .disabled(!session.isLineOperationAvailable(kind))
                     }
+                }
+                Divider()
+                Button(L10n.t("上移当前行")) { session.moveCurrentLine(-1) }
+                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                Button(L10n.t("下移当前行")) { session.moveCurrentLine(1) }
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                Button(L10n.t("复制当前行")) { session.duplicateCurrentLine() }
+                    .keyboardShortcut("d", modifiers: .command)
+                Button(L10n.t("插入日期时间")) { session.insertTimestamp() }
+                Divider()
+                Menu(L10n.t("书签")) {
+                    Button(L10n.t("切换书签")) { session.toggleBookmark() }
+                    Button(L10n.t("下一个书签")) { session.stepBookmark(1) }
+                    Button(L10n.t("上一个书签")) { session.stepBookmark(-1) }
+                }
+                Menu(L10n.t("代码折叠")) {
+                    Button(L10n.t("折叠当前块")) { session.toggleFold() }
+                        .keyboardShortcut("[", modifiers: [.command, .option])
+                    Button(L10n.t("展开全部折叠")) { session.unfoldAll() }
+                        .keyboardShortcut("]", modifiers: [.command, .option])
                 }
             }
             // 字号与显示开关（R18 / R19）：并入框架自带的「显示」菜单（现只含「进入全屏幕」），
@@ -106,21 +138,25 @@ struct LitePadApp: App {
             // 五项开关直读设置属性本身，勾选态即设置值，两端不各存一份；
             // 「不可见元素」只切总开关，五个子项仍由设置页控制
             CommandGroup(after: .toolbar) {
-                Button("增大字号") { settings.stepEditorFontSize(by: 1) }
+                Button(L10n.t("增大字号")) { settings.stepEditorFontSize(by: 1) }
                     .keyboardShortcut("=", modifiers: .command)
-                Button("减小字号") { settings.stepEditorFontSize(by: -1) }
+                Button(L10n.t("减小字号")) { settings.stepEditorFontSize(by: -1) }
                     .keyboardShortcut("-", modifiers: .command)
-                Button("复位字号") { settings.resetEditorFontSize() }
+                Button(L10n.t("复位字号")) { settings.resetEditorFontSize() }
                     .keyboardShortcut("0", modifiers: .command)
                 Divider()
-                Toggle("软换行", isOn: $settings.wrapLines)
-                Toggle("行号", isOn: $settings.showLineNumbers)
-                Toggle("不可见元素", isOn: $settings.showInvisibles)
-                Toggle("缩进指示", isOn: $settings.showIndentGuides)
-                Toggle("当前行高亮", isOn: $settings.highlightCurrentLine)
+                Toggle(L10n.t("软换行"), isOn: $settings.wrapLines)
+                Toggle(L10n.t("行号"), isOn: $settings.showLineNumbers)
+                Toggle(L10n.t("不可见元素"), isOn: $settings.showInvisibles)
+                Toggle(L10n.t("缩进指示"), isOn: $settings.showIndentGuides)
+                Toggle(L10n.t("当前行高亮"), isOn: $settings.highlightCurrentLine)
+                Divider()
+                Button(L10n.t("关闭参考栏")) { session.closeSplit() }
+                    .keyboardShortcut("\\", modifiers: [.command, .shift])
+                    .disabled(session.splitTab == nil)
             }
             // 菜单栏「工具」：与标题栏「工具」下拉同一入口，供键盘 / 触控板访问
-            CommandMenu("工具") {
+            CommandMenu(settings.interfaceLanguage == .english ? "Tools" : L10n.t("工具")) {
                 ForEach(TextToolKind.allCases) { kind in
                     Button(kind.displayName) { session.openTool(kind) }
                 }

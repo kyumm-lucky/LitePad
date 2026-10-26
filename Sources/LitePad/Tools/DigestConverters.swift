@@ -65,8 +65,8 @@ enum TimestampUnit: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .seconds: return "Unix 秒"
-        case .milliseconds: return "Unix 毫秒"
+        case .seconds: return L10n.t("Unix 秒")
+        case .milliseconds: return L10n.t("Unix 毫秒")
         }
     }
 }
@@ -86,17 +86,17 @@ enum TimestampConverter {
     static func toLocalTime(_ text: String, unit: TimestampUnit) -> ConvertOutcome {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return .failure("请输入 Unix 时间戳（如 \(sample(unit))）")
+            return .failure(L10n.format("请输入 Unix 时间戳（如 %@）", sample(unit)))
         }
         // 小数点与逗号都接受（部分地区用逗号分隔小数）；十六进制、科学计数法这类写法不接受
         let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
         guard isTimestampText(normalized), let value = Double(normalized) else {
-            return .failure("不是有效的时间戳：请输入数字（如 \(sample(unit))）")
+            return .failure(L10n.format("不是有效的时间戳：请输入数字（如 %@）", sample(unit)))
         }
         let milliseconds = unit == .seconds ? (value * 1000).rounded() : value.rounded()
         guard milliseconds >= minMilliseconds, milliseconds < maxMilliseconds,
               let whole = Int64(exactly: milliseconds) else {
-            return .failure("时间戳超出可表示的日期范围（0001 - 9999 年）")
+            return .failure(L10n.t("时间戳超出可表示的日期范围（0001 - 9999 年）"))
         }
         return .success(string(fromMilliseconds: whole))
     }
@@ -105,17 +105,17 @@ enum TimestampConverter {
     static func toTimestamp(_ text: String, unit: TimestampUnit) -> ConvertOutcome {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return .failure("请输入本地时间（如 \(sampleLocalTime)）")
+            return .failure(L10n.format("请输入本地时间（如 %@）", sampleLocalTime))
         }
         guard let date = date(from: trimmed) else {
-            return .failure("不是有效的本地时间：可用 \(sampleLocalTime)、2024/01/02 03:04:05 或 2024-01-02T03:04:05Z 这类写法")
+            return .failure(L10n.format("不是有效的本地时间：可用 %@、2024/01/02 03:04:05 或 2024-01-02T03:04:05Z 这类写法", sampleLocalTime))
         }
         // 与反向路径同一口径的护栏：极端日期换算成毫秒后可能超出 Int64 的可表示范围，
         // 直接构造会 trap（整个进程崩掉）；这里按「超出可表示的日期范围」拒绝
         let milliseconds = (date.timeIntervalSince1970 * 1000).rounded()
         guard milliseconds >= minMilliseconds, milliseconds < maxMilliseconds,
               let whole = Int64(exactly: milliseconds) else {
-            return .failure("时间超出可表示的日期范围（0001 - 9999 年）")
+            return .failure(L10n.t("时间超出可表示的日期范围（0001 - 9999 年）"))
         }
         return .success(timestampText(milliseconds: whole, unit: unit))
     }

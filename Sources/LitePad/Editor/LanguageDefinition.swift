@@ -21,7 +21,7 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
     var isPlain: Bool { id == "plain" }
 
     static let plain = LanguageDefinition(
-        id: "plain", displayName: "纯文本", extensions: ["txt", "text", "log"],
+        id: "plain", displayName: L10n.t("纯文本"), extensions: ["txt", "text", "log"],
         keywords: [], keywordsIgnoreCase: false,
         lineComment: nil, blockCommentStart: nil, blockCommentEnd: nil,
         blockOpeners: [],
@@ -120,8 +120,138 @@ struct LanguageDefinition: Equatable, Hashable, Identifiable {
         singleQuoteStrings: false, tripleQuoteStrings: false, highlightTags: false
     )
 
+    static let css = LanguageDefinition(
+        id: "css", displayName: "CSS", extensions: ["css", "scss", "less"],
+        keywords: ["charset", "font-face", "import", "important", "keyframes",
+                   "media", "namespace", "page", "supports"],
+        keywordsIgnoreCase: true,
+        lineComment: nil, blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["{"],
+        singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
+    )
+
+    static let c = LanguageDefinition(
+        id: "c", displayName: "C", extensions: ["c", "h"],
+        keywords: [
+            "auto", "break", "case", "char", "const", "continue", "default", "do",
+            "double", "else", "enum", "extern", "float", "for", "goto", "if", "inline",
+            "int", "long", "register", "restrict", "return", "short", "signed",
+            "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned",
+            "void", "volatile", "while", "true", "false", "NULL"
+        ],
+        keywordsIgnoreCase: false,
+        lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["{", "(", "["],
+        singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
+    )
+
+    static let cpp = LanguageDefinition(
+        id: "cpp", displayName: "C++", extensions: ["cpp", "cc", "cxx", "hpp", "hh", "hxx"],
+        keywords: [
+            "alignas", "alignof", "and", "asm", "auto", "bool", "break", "case",
+            "catch", "char", "class", "const", "constexpr", "const_cast", "continue",
+            "decltype", "default", "delete", "do", "double", "dynamic_cast", "else",
+            "enum", "explicit", "export", "extern", "false", "float", "for", "friend",
+            "goto", "if", "inline", "int", "long", "mutable", "namespace", "new",
+            "noexcept", "nullptr", "operator", "private", "protected", "public",
+            "register", "reinterpret_cast", "return", "short", "signed", "sizeof",
+            "static", "static_assert", "static_cast", "struct", "switch", "template",
+            "this", "throw", "true", "try", "typedef", "typeid", "typename", "union",
+            "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while"
+        ],
+        keywordsIgnoreCase: false,
+        lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["{", "(", "["],
+        singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
+    )
+
+    static let csharp = LanguageDefinition(
+        id: "csharp", displayName: "C#", extensions: ["cs"],
+        keywords: [
+            "abstract", "as", "async", "await", "base", "bool", "break", "byte",
+            "case", "catch", "char", "checked", "class", "const", "continue",
+            "decimal", "default", "delegate", "do", "double", "else", "enum",
+            "event", "explicit", "extern", "false", "finally", "fixed", "float",
+            "for", "foreach", "goto", "if", "implicit", "in", "int", "interface",
+            "internal", "is", "lock", "long", "namespace", "new", "null", "object",
+            "operator", "out", "override", "params", "private", "protected",
+            "public", "readonly", "record", "ref", "return", "sbyte", "sealed",
+            "short", "sizeof", "stackalloc", "static", "string", "struct",
+            "switch", "this", "throw", "true", "try", "typeof", "uint", "ulong",
+            "unchecked", "unsafe", "ushort", "using", "var", "virtual", "void",
+            "volatile", "while"
+        ],
+        keywordsIgnoreCase: false,
+        lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["{", "(", "["],
+        singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
+    )
+
+    static let go = LanguageDefinition(
+        id: "go", displayName: "Go", extensions: ["go"],
+        keywords: [
+            "break", "case", "chan", "const", "continue", "default", "defer",
+            "else", "fallthrough", "for", "func", "go", "goto", "if", "import",
+            "interface", "map", "package", "range", "return", "select", "struct",
+            "switch", "type", "var", "true", "false", "nil"
+        ],
+        keywordsIgnoreCase: false,
+        lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["{", "(", "["],
+        singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
+    )
+
+    static let rust = LanguageDefinition(
+        id: "rust", displayName: "Rust", extensions: ["rs"],
+        keywords: [
+            "as", "async", "await", "break", "const", "continue", "crate", "dyn",
+            "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
+            "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+            "self", "Self", "static", "struct", "super", "trait", "true", "type",
+            "unsafe", "use", "where", "while"
+        ],
+        keywordsIgnoreCase: false,
+        lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+        blockOpeners: ["{", "(", "["],
+        singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
+    )
+
+    static let yaml = LanguageDefinition(
+        id: "yaml", displayName: "YAML", extensions: ["yaml", "yml"],
+        keywords: ["true", "false", "null", "yes", "no", "on", "off"],
+        keywordsIgnoreCase: true,
+        lineComment: "#", blockCommentStart: nil, blockCommentEnd: nil,
+        blockOpeners: [],
+        singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
+    )
+
+    static let shell = LanguageDefinition(
+        id: "shell", displayName: "Shell", extensions: ["sh", "bash", "zsh", "fish"],
+        keywords: [
+            "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
+            "done", "case", "esac", "in", "function", "select", "return", "local",
+            "export", "readonly", "shift", "break", "continue", "echo", "printf",
+            "test", "source", "exit", "set", "unset", "trap", "eval", "exec",
+            "cd", "pwd", "true", "false", "declare", "typeset", "alias", "read"
+        ],
+        keywordsIgnoreCase: false,
+        lineComment: "#", blockCommentStart: nil, blockCommentEnd: nil,
+        blockOpeners: ["{", "("],
+        singleQuoteStrings: true, tripleQuoteStrings: false, highlightTags: false
+    )
+
+    /// Markdown 的着色规则不靠关键词，由 SyntaxHighlighter 里的专用分支处理
+    static let markdown = LanguageDefinition(
+        id: "markdown", displayName: "Markdown", extensions: ["md", "markdown", "mdown"],
+        keywords: [], keywordsIgnoreCase: false,
+        lineComment: nil, blockCommentStart: "<!--", blockCommentEnd: "-->",
+        blockOpeners: [],
+        singleQuoteStrings: false, tripleQuoteStrings: false, highlightTags: false
+    )
+
     static let all: [LanguageDefinition] = [
-        plain, html, xml, sql, java, python, javascript, json
+        plain, html, xml, css, sql, java, c, cpp, csharp, go, rust,
+        python, javascript, json, yaml, shell, markdown
     ]
 
     static func detect(from url: URL?) -> LanguageDefinition {

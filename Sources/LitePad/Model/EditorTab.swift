@@ -142,7 +142,7 @@ enum FindEngine {
 /// 序号取当前已打开标签中出现过的最大序号 + 1，因此同一会话内不会出现两张同名标签；
 /// 不承诺跨会话的全局递增 —— 恢复出来的标签沿用存下来的标题，也从它们继续往下算
 enum UntitledTitle {
-    static let prefix = "新文件"
+    static let prefix = L10n.t("新文件")
 
     /// 下一个标题：`titles` 是当前所有标签的未标题标题（已绑定文件的标签也要传进来，
     /// 它的标题在关闭前一直占位，否则序号会被下一个新标签复用）
@@ -193,6 +193,19 @@ struct EditorBridge {
     var isComposing: (() -> Bool)?
     /// 整串正文重读；返回是否完成替换。视图不存在时为 nil，会话改走模型侧赋值
     var reloadText: ((String) -> Bool)?
+    /// 当前行上移 / 下移（-1 = 上，1 = 下）
+    var moveLine: ((Int) -> Void)?
+    /// 复制当前行
+    var duplicateLine: (() -> Void)?
+    /// 在光标处插入日期时间
+    var insertTimestamp: (() -> Void)?
+    /// 切换当前行的书签
+    var toggleBookmark: (() -> Void)?
+    /// 跳到下一个 / 上一个书签（1 / -1）
+    var stepBookmark: ((Int) -> Void)?
+    /// 折叠当前块 / 展开全部折叠
+    var toggleFold: (() -> Void)?
+    var unfoldAll: (() -> Void)?
 }
 
 /// 单个标签页对应的文档状态
@@ -221,9 +234,29 @@ final class EditorTab: ObservableObject, Identifiable {
     @Published private(set) var stats: DocumentStats = .empty
     /// 打开 / 最近一次保存时的文件修改时间，用于外部修改检测
     var fileModificationDate: Date?
+    /// 切换标签时保留的选区：视图按 tab.id 重建，模型不记的话切回来会回到文首
+    var lastSelection: NSRange?
+    /// 切换标签时保留的滚动偏移（clip view 的 bounds.origin）
+    var lastScrollOrigin: NSPoint?
+    /// 上次关闭查找面板时的条件：重新打开时继续用同一份查询与选项
+    var lastFind: FindState?
+    /// 书签：存字符偏移（行首位置），编辑时由文本存储回调整体平移
+    @Published private(set) var bookmarks: Set<Int> = []
+    /// 折叠区间（字符偏移）：只影响显示，正文照常保存；编辑后随正文平移
+    @Published private(set) var foldedRanges: [NSRange] = []
+    /// 折叠块所在行号（行号栏画标记用），随折叠与正文变化刷新
+    private(set) var foldedOwnerLines: Set<Int> = []
+    /// 打开时解码结果未通过字节往返校验：禁用自动保存，显式保存前必须确认
+    private(set) var isEncodingUnverified = false
+    /// 正文来自已命名文稿的恢复草稿：自动保存停用，直到用户显式保存
+    private(set) var isRecoveryRestored = false
+    /// 大文档阈值：超过后跳过高亮与选中词扫描等全文开销
+    static let largeDocumentByteLimit = 2 * 1024 * 1024
+    /// 是否为大文档（初始化时按正文 UTF-8 字节数判定，避免逐键重算）
+    private(set) var isLargeDocument = false
 
     var displayName: String {
-        fileURL?.lastPathComponent ?? untitledTitle ?? "未命名"
+        fileURL?.lastPathComponent ?? untitledTitle ?? L10n.t("未命名")
     }
 
     /// 未指定编码 / 换行符时取全局设置的默认值；语法按扩展名检测，无文件时取默认语法设置。
@@ -231,7 +264,8 @@ final class EditorTab: ObservableObject, Identifiable {
     /// 不传即「刚建出的干净标签」，恢复出来的内容则要显式传空串让它带脏标记
     init(fileURL: URL? = nil, text: String = "", savedText: String? = nil,
          encoding: TextEncoding? = nil, lineEnding: LineEnding? = nil,
-         untitledTitle: String? = nil) {
+         untitledTitle: String? = nil, encodingUnverified: Bool = false,
+         recoveryRestored: Bool = false) {
         let settings = AppSettings.shared
         let resolvedEncoding = encoding ?? settings.defaultEncoding
         let resolvedLineEnding = lineEnding ?? settings.defaultLineEnding
@@ -248,6 +282,9 @@ final class EditorTab: ObservableObject, Identifiable {
         self.savedLineEnding = resolvedLineEnding
         self.isDirty = false
         self.fileModificationDate = Self.fileDate(at: fileURL)
+        self.isEncodingUnverified = encodingUnverified
+        self.isRecoveryRestored = recoveryRestored
+        self.isLargeDocument = text.utf8.count >= Self.largeDocumentByteLimit
         // 基准与正文不一致的初始态（恢复出来的标签把基准传成空串）要在建出来的那一刻就是脏的：
         // init 期间 didSet 不会触发，脏标记必须在这里对齐一次
         refreshDirty()
@@ -277,7 +314,126 @@ final class EditorTab: ObservableObject, Identifiable {
         }
     }
 
+    /// 编码已经过字节往返校验（显式保存成功或按编码重读成功）：解除自动保存限制
+    func markEncodingVerified() {
+        isEncodingUnverified = false
+    }
+
+    /// 标记正文来自恢复草稿：写入恢复区的事件流会让自动保存停下，直到显式保存
+    func markRecoveryRestored() {
+        isRecoveryRestored = true
+    }
+
+    /// 显式保存成功后解除「恢复草稿」限制
+    func markRecoveryResolved() {
+        isRecoveryRestored = false
+    }
+
+    /// 整串正文替换后重算大文档判定（打开与重读是仅有的两处整串来源）
+    func refreshDocumentSize() {
+        isLargeDocument = text.utf8.count >= Self.largeDocumentByteLimit
+    }
+
     // MARK: - 查找/替换
+
+    /// 关闭查找面板：记住当前条件后收起，下次 Cmd+F 继续用同一份查询与选项
+    func closeFindPanel() {
+        lastFind = findState
+        findState = nil
+    }
+
+    // MARK: - 书签
+
+    /// 切换某一行（行首偏移）的书签
+    func toggleBookmark(at offset: Int) {
+        if bookmarks.contains(offset) {
+            bookmarks.remove(offset)
+        } else {
+            bookmarks.insert(offset)
+        }
+    }
+
+    func clearBookmarks() {
+        guard !bookmarks.isEmpty else { return }
+        bookmarks.removeAll()
+    }
+
+    /// 正文编辑后平移书签：落在替换区内部的丢弃，位于编辑起点及之后的按增量移动。
+    /// `editedRange` 是新正文里的编辑区间，`delta` 是长度变化量
+    func adjustBookmarks(forEditedRange range: NSRange, changeInLength delta: Int) {
+        guard !bookmarks.isEmpty, delta != 0 || range.length > 0 else { return }
+        let oldEnd = range.location + range.length - delta
+        var updated = Set<Int>()
+        for offset in bookmarks {
+            if offset <= range.location {
+                updated.insert(offset)
+            } else if offset >= oldEnd {
+                updated.insert(max(0, offset + delta))
+            }
+        }
+        if updated != bookmarks {
+            bookmarks = updated
+        }
+    }
+
+    // MARK: - 代码折叠
+
+    /// 折叠 / 展开当前块：光标落在已折叠区间里时展开，否则按缩进算一段新折叠。
+    /// 大文件模式不做折叠（与跳过高亮同一口径，避免整篇重排）
+    @discardableResult
+    func toggleFold(at location: Int) -> Bool {
+        guard !isLargeDocument else { return false }
+        if removeFold(containing: location) { return false }
+        guard let range = CodeFolding.foldRange(atCharacter: location, in: text) else { return false }
+        addFold(range)
+        return true
+    }
+
+    func addFold(_ range: NSRange) {
+        guard range.length > 0 else { return }
+        foldedRanges.removeAll { NSIntersectionRange($0, range).length > 0 }
+        foldedRanges.append(range)
+        foldedRanges.sort { $0.location < $1.location }
+        refreshFoldedOwnerLines()
+    }
+
+    @discardableResult
+    func removeFold(containing location: Int) -> Bool {
+        guard let index = foldedRanges.firstIndex(where: {
+            NSLocationInRange(location, $0) || location == $0.location
+        }) else { return false }
+        foldedRanges.remove(at: index)
+        refreshFoldedOwnerLines()
+        return true
+    }
+
+    func clearFolds() {
+        guard !foldedRanges.isEmpty else { return }
+        foldedRanges.removeAll()
+        foldedOwnerLines.removeAll()
+    }
+
+    private func refreshFoldedOwnerLines() {
+        foldedOwnerLines = CodeFolding.ownerLineNumbers(for: foldedRanges, in: text)
+    }
+
+    /// 正文编辑后平移折叠区间：编辑与折叠交叠时丢弃这段折叠（否则新输入会被藏起来），
+    /// 编辑在其之前则整体按增量平移；行号标记用编辑后的正文重算
+    func adjustFolds(forEditedRange range: NSRange, changeInLength delta: Int, newText: String) {
+        guard !foldedRanges.isEmpty else { return }
+        var updated: [NSRange] = []
+        for fold in foldedRanges {
+            let foldEnd = NSMaxRange(fold)
+            if range.location + range.length <= fold.location {
+                updated.append(NSRange(location: max(0, fold.location + delta), length: fold.length))
+            } else if range.location >= foldEnd {
+                updated.append(fold)
+            }
+        }
+        guard updated != foldedRanges else { return }
+        foldedRanges = updated
+        foldedOwnerLines = CodeFolding.ownerLineNumbers(for: updated, in: newText)
+    }
 
     /// 修改查找条件（输入、开关变化），随后重算匹配
     func updateFind(_ mutate: (inout FindState) -> Void) {

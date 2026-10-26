@@ -19,6 +19,11 @@ let package = Package(
                     "-Xlinker", "Resources/DevRunInfo.plist",
                 ])
             ]
+        ),
+        .testTarget(
+            name: "LitePadTests",
+            dependencies: ["LitePad"],
+            path: "Tests/LitePadTests"
         )
     ]
 )

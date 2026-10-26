@@ -25,18 +25,18 @@ extension EditorSession {
         var message: String {
             switch self {
             case .unreadable(let error):
-                return "读不到磁盘上的内容：\(error.localizedDescription)"
+                return L10n.format("读不到磁盘上的内容：%@", error.localizedDescription)
             case .undecodable(let encoding):
-                return "磁盘上的字节无法用「\(encoding.displayName)」解码，这个编码读不出原文。"
-                    + "为避免读出错版正文后被保存覆盖回文件，本次重读已中止："
-                    + "正文、编码与保存基准都保持原样（编码已恢复为原来的保存编码）。请换一个编码再试。"
+                return L10n.format("磁盘上的字节无法用「%@」解码，这个编码读不出原文。", encoding.displayName)
+                    + L10n.t("为避免读出错版正文后被保存覆盖回文件，本次重读已中止：")
+                    + L10n.t("正文、编码与保存基准都保持原样（编码已恢复为原来的保存编码）。请换一个编码再试。")
             case .roundTripMismatch(let encoding):
-                return "按「\(encoding.displayName)」读出的正文再编码回去与磁盘字节不一致，"
-                    + "这个编码认不出原文（很可能是选错了编码）。"
-                    + "为避免之后的保存把文件改写成乱码，本次重读已中止："
-                    + "正文、编码与保存基准都保持原样（编码已恢复为原来的保存编码）。请换一个编码再试。"
+                return L10n.format("按「%@」读出的正文再编码回去与磁盘字节不一致，", encoding.displayName)
+                    + L10n.t("这个编码认不出原文（很可能是选错了编码）。")
+                    + L10n.t("为避免之后的保存把文件改写成乱码，本次重读已中止：")
+                    + L10n.t("正文、编码与保存基准都保持原样（编码已恢复为原来的保存编码）。请换一个编码再试。")
             case .replaceRejected:
-                return "编辑视图没有接受这次整串替换，正文与编码都保持原样。"
+                return L10n.t("编辑视图没有接受这次整串替换，正文与编码都保持原样。")
             }
         }
     }
@@ -99,7 +99,7 @@ extension EditorSession {
         // 失败时不把指定编码留在保存编码上（KTD4：不把指定编码绑成保存编码）：这个编码已经证明
         // 读不通这个文件，留着它只会让下一次显式保存把认得出的正文改写成另一个编码的字节
         tab.encoding = tab.savedEncoding
-        presentErrorAlert(title: "无法按此编码重新载入", message: failure.message)
+        presentErrorAlert(title: L10n.t("无法按此编码重新载入"), message: failure.message)
     }
 
     /// 重读正文的落点：视图存在时把整串正文交给编辑视图走撤销协议（KTD14），
@@ -148,15 +148,21 @@ extension EditorSession {
         tab.lineEnding = LineEnding.detect(in: decoded.text)
         // 正文、编码、换行符三者一起成为新基准：必须全部落齐后才标记干净
         tab.markSaved(to: url)
+        // 重读成功即代表编码已被显式确认，同时按新正文重算大文档判定
+        tab.markEncodingVerified()
+        tab.refreshDocumentSize()
+        // 整串换正文后旧书签偏移已失效
+        tab.clearBookmarks()
+        tab.clearFolds()
         return nil
     }
 
     func confirmReload(of tab: EditorTab) -> Bool {
         let alert = NSAlert()
-        alert.messageText = "“\(tab.displayName)”已被其他程序修改"
-        alert.informativeText = "是否重新载入磁盘上的版本？当前内容将被替换。"
-        alert.addButton(withTitle: "重新载入")
-        alert.addButton(withTitle: "保留当前版本")
+        alert.messageText = L10n.format("“%@”已被其他程序修改", tab.displayName)
+        alert.informativeText = L10n.t("是否重新载入磁盘上的版本？当前内容将被替换。")
+        alert.addButton(withTitle: L10n.t("重新载入"))
+        alert.addButton(withTitle: L10n.t("保留当前版本"))
         return alert.runModal() == .alertFirstButtonReturn
     }
 }

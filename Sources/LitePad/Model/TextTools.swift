@@ -14,22 +14,32 @@ enum TextToolKind: String, CaseIterable, Identifiable {
     case uuid
     case timestamp
     case html
+    case regex
+    case columnNumbers
+    case xml
+    case sql
+    case folderSearch
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .unicode: return "Unicode 转义"
-        case .ascii: return "ASCII 码"
-        case .url: return "URL 编码"
+        case .unicode: return L10n.t("Unicode 转义")
+        case .ascii: return L10n.t("ASCII 码")
+        case .url: return L10n.t("URL 编码")
         case .base64: return "Base64"
-        case .json: return "JSON 格式化"
-        case .diff: return "字符串对比"
-        case .lines: return "行操作"
-        case .hash: return "哈希计算"
-        case .uuid: return "UUID 生成"
-        case .timestamp: return "时间戳互转"
-        case .html: return "HTML 实体"
+        case .json: return L10n.t("JSON 格式化")
+        case .diff: return L10n.t("字符串对比")
+        case .lines: return L10n.t("行操作")
+        case .hash: return L10n.t("哈希计算")
+        case .uuid: return L10n.t("UUID 生成")
+        case .timestamp: return L10n.t("时间戳互转")
+        case .html: return L10n.t("HTML 实体")
+        case .regex: return L10n.t("正则测试器")
+        case .columnNumbers: return L10n.t("列编号")
+        case .xml: return L10n.t("XML 格式化")
+        case .sql: return L10n.t("SQL 格式化")
+        case .folderSearch: return L10n.t("文件夹搜索")
         }
     }
 
@@ -46,6 +56,11 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .uuid: return "barcode"
         case .timestamp: return "clock"
         case .html: return "chevron.left.chevron.right"
+        case .regex: return "magnifyingglass"
+        case .columnNumbers: return "list.number"
+        case .xml: return "chevron.left.chevron.right"
+        case .sql: return "cylinder"
+        case .folderSearch: return "folder"
         }
     }
 
@@ -55,8 +70,9 @@ enum TextToolKind: String, CaseIterable, Identifiable {
     /// 没有方向档的工具（行操作、哈希、UUID）不渲染这个分段控件，取值只为满足接口
     var directionLabels: [String] {
         switch self {
-        case .json: return ["格式化", "压缩"]
-        case .timestamp: return ["转本地时间", "转时间戳"]
+        case .json: return [L10n.t("格式化"), L10n.t("压缩")]
+        case .timestamp: return [L10n.t("转本地时间"), L10n.t("转时间戳")]
+        case .xml, .sql: return [L10n.t("格式化"), L10n.t("压缩")]
         default: return ConvertDirection.allCases.map(\.displayName)
         }
     }
@@ -66,16 +82,15 @@ enum TextToolKind: String, CaseIterable, Identifiable {
     /// 不会被静默当成「有方向档」而多渲染出一组用不上的分段控件
     var hasDirection: Bool {
         switch self {
-        case .unicode, .ascii, .url, .base64, .json, .diff, .timestamp, .html:
+        case .unicode, .ascii, .url, .base64, .json, .diff, .timestamp, .html, .xml, .sql:
             return true
-        case .lines, .hash, .uuid:
+        case .lines, .hash, .uuid, .regex, .columnNumbers, .folderSearch:
             return false
         }
     }
 
-    /// 是否需要输入：UUID 是凭空生成（R24），面板不渲染输入区，
-    /// 输入为空也不影响结果区可用（KTD12）
-    var requiresInput: Bool { self != .uuid }
+    /// 是否需要输入：UUID 是凭空生成、文件夹搜索有独立输入框，面板都不渲染通用输入区
+    var requiresInput: Bool { self != .uuid && self != .folderSearch }
 
     /// 对比工具用 A/B 两栏，其余工具用「输入 → 结果」
     var isConverter: Bool { self != .diff }
@@ -114,6 +129,15 @@ final class TextToolsState: ObservableObject {
     @Published var timestampUnit: TimestampUnit = .seconds
     /// HTML 实体：连非 ASCII 字符一起转义
     @Published var htmlEscapesNonASCII = false
+
+    // MARK: - 正则测试器 / 列编号
+
+    /// 正则测试器的模式（输入区是被测试文本）
+    @Published var regexPattern = ""
+    @Published var regexIgnoreCase = false
+    /// 列编号：位数补零、从 0 开始
+    @Published var columnNumberPadZeros = true
+    @Published var columnNumberStartAtZero = false
 
     /// UUID 工具当前生成的值：打开工具或点「重新生成」时换一次（取瞬时值，不做定时刷新）
     private var uuidValue = UUID()
@@ -172,7 +196,7 @@ final class TextToolsState: ObservableObject {
         switch kind {
         case .diff:
             diffLeft = text
-        case .uuid:
+        case .uuid, .folderSearch:
             break
         case .timestamp where text.isEmpty:
             input = nowText
@@ -292,6 +316,19 @@ final class TextToolsState: ObservableObject {
             outcome = direction == .encode
                 ? .success(HTMLEntityCodec.encode(input, escapeNonASCII: htmlEscapesNonASCII))
                 : .success(HTMLEntityCodec.decode(input))
+        case .regex:
+            outcome = RegexTester.test(pattern: regexPattern, text: input,
+                                       ignoreCase: regexIgnoreCase)
+        case .columnNumbers:
+            outcome = ColumnNumberer.apply(to: input,
+                                           startAtZero: columnNumberStartAtZero,
+                                           padZeros: columnNumberPadZeros)
+        case .xml:
+            outcome = direction == .encode ? XMLFormatter.pretty(input) : XMLFormatter.compact(input)
+        case .sql:
+            outcome = direction == .encode ? SQLFormatter.pretty(input) : SQLFormatter.compact(input)
+        case .folderSearch:
+            return
         case .diff:
             return
         }

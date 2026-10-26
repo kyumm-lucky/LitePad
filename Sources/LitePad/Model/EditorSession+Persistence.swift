@@ -14,14 +14,14 @@ extension EditorSession {
         var message: String {
             switch self {
             case .unrepresentable(let encoding):
-                return "当前编码（\(encoding.displayName)）无法表示文稿中的部分字符。"
+                return L10n.format("当前编码（%@）无法表示文稿中的部分字符。", encoding.displayName)
             case .io(let error):
                 return error.localizedDescription
             }
         }
 
         /// 失败后文稿状态的统一交代：任何路径都不允许出现「已保存但内容为空」这类第三态
-        static let dirtyNote = "文件未写入，文稿保持未保存状态。"
+        static let dirtyNote = L10n.t("文件未写入，文稿保持未保存状态。")
     }
 
     func saveSelectedTab() {
@@ -50,15 +50,15 @@ extension EditorSession {
         let panel = NSSavePanel()
         // 默认文件名取标签的标题（R8）：未标题标签是「新文件2」，就默认存成「新文件2.txt」
         panel.nameFieldStringValue = tab.fileURL?.lastPathComponent ?? "\(tab.displayName).txt"
-        panel.message = "选择保存位置"
+        panel.message = L10n.t("选择保存位置")
         guard panel.runModal() == .OK, let url = panel.url else { return false }
         // 绑定前按 KTD16 的统一规则查重：目标路径已由别的标签持有时中止，
         // 既不改本标签的绑定，也不动对方标签
         let target = Self.fileIdentity(url)
         if let holder = tabIndex(holdingFileAt: target), tabs[holder] !== tab {
-            presentErrorAlert(title: "无法保存到该文件",
-                              message: "“\(target.lastPathComponent)”已由标签“\(tabs[holder].displayName)”打开。"
-                                  + "请换一个文件名，或先关闭那个标签。")
+            presentErrorAlert(title: L10n.t("无法保存到该文件"),
+                              message: L10n.format("“%@”已由标签“%@”打开。", target.lastPathComponent, tabs[holder].displayName)
+                                  + L10n.t("请换一个文件名，或先关闭那个标签。"))
             return false
         }
         // 清理放在面板确认之后：取消另存为不该改动正文
@@ -73,6 +73,17 @@ extension EditorSession {
     /// 清理被编辑视图拒绝时中止本次保存并报错——不能默默跳过设置项
     @discardableResult
     func finishSave(tab: EditorTab, to url: URL) -> Bool {
+        // 编码未通过字节往返校验时，保存会用当前编码重写整篇文件，可能把原内容改坏；
+        // 自动保存已停用，但显式保存仍要再确认一次，不能悄悄按错误编码落盘
+        if tab.isEncodingUnverified {
+            let alert = NSAlert()
+            alert.messageText = L10n.t("编码尚未确认")
+            alert.informativeText = L10n.format("“%@”的磁盘字节与按「%@」解码的结果无法往返校验。", tab.displayName, tab.encoding.displayName)
+                + L10n.t("继续保存会按该编码重写整个文件，可能改变原文件内容。")
+            alert.addButton(withTitle: L10n.t("继续保存"))
+            alert.addButton(withTitle: L10n.t("取消"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        }
         switch prepareSaveCleanup(for: tab) {
         case .rejected(let reason):
             return abortSave(tab: tab, reason: reason)
@@ -80,8 +91,8 @@ extension EditorSession {
             guard let failure = write(tab: tab, to: url) else { return true }
             // 用户已看到失败：登记后自动写盘不再就同一问题重复打扰
             tab.writeFailureReported = true
-            presentErrorAlert(title: "无法保存文件",
-                              message: failure.message + WriteFailure.dirtyNote + "请在处理问题后重试。")
+            presentErrorAlert(title: L10n.t("无法保存文件"),
+                              message: failure.message + WriteFailure.dirtyNote + L10n.t("请在处理问题后重试。"))
             return false
         }
     }
@@ -112,8 +123,10 @@ extension EditorSession {
                                            lineEnding: tab.lineEnding)
         guard cleaned != tab.text else { return .done }
         tab.text = cleaned
-        // 模型侧整串替换后匹配区间已失效，必须重算（KTD15）
+        // 模型侧整串替换后匹配区间与书签偏移都已失效，必须重算
         tab.refreshMatches()
+        tab.clearBookmarks()
+        tab.clearFolds()
         return .done
     }
 
@@ -121,7 +134,7 @@ extension EditorSession {
     @discardableResult
     func abortSave(tab: EditorTab, reason: String) -> Bool {
         tab.writeFailureReported = true
-        presentErrorAlert(title: "无法保存文件", message: reason + WriteFailure.dirtyNote)
+        presentErrorAlert(title: L10n.t("无法保存文件"), message: reason + WriteFailure.dirtyNote)
         return false
     }
 
@@ -136,7 +149,16 @@ extension EditorSession {
         } catch {
             return .io(error)
         }
+        let previousURL = tab.fileURL
         tab.markSaved(to: url)
+        tab.markEncodingVerified()
+        tab.markRecoveryResolved()
+        // 显式保存成功：已命名恢复区里这一份草稿不再需要
+        namedRecovery.remove(path: url.path)
+        // 另存为换了路径：旧路径上的草稿也一并清掉，避免下次启动按旧路径复活
+        if let previousURL, previousURL.path != url.path {
+            namedRecovery.remove(path: previousURL.path)
+        }
         tab.writeFailureReported = false
         // 标签一旦绑定了文件就不再是未标题文稿，恢复区里的条目就此离开（HTD 的
         // 「另存为成功并绑定文件」出口；显式保存与另存为共用这一个落点）
@@ -154,6 +176,8 @@ extension EditorSession {
                 Task { @MainActor in
                     guard let self,
                           AppSettings.shared.autosaveEnabled,
+                          !tab.isEncodingUnverified,
+                          !tab.isRecoveryRestored,
                           let url = tab.fileURL,
                           tab.text != tab.savedText else { return }
                     guard let failure = self.write(tab: tab, to: url) else { return }
@@ -167,8 +191,8 @@ extension EditorSession {
     func reportAutosaveFailure(_ failure: WriteFailure, tab: EditorTab) {
         guard !tab.writeFailureReported else { return }
         tab.writeFailureReported = true
-        presentErrorAlert(title: "自动保存失败",
-                          message: "“\(tab.displayName)”未能自动写盘。\(failure.message)"
-                              + WriteFailure.dirtyNote + "请手动保存或先处理该问题。")
+        presentErrorAlert(title: L10n.t("自动保存失败"),
+                          message: L10n.format("“%@”未能自动写盘。%@", tab.displayName, failure.message)
+                              + WriteFailure.dirtyNote + L10n.t("请手动保存或先处理该问题。"))
     }
 }

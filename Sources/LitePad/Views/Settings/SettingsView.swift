@@ -11,19 +11,19 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .general: return "通用"
-        case .appearance: return "外观"
-        case .window: return "编辑器"
-        case .format: return "格式"
+        case .general: return L10n.t("通用")
+        case .appearance: return L10n.t("外观")
+        case .window: return L10n.t("编辑器")
+        case .format: return L10n.t("格式")
         }
     }
 
     var subtitle: String {
         switch self {
-        case .general: return "启动与保存"
-        case .appearance: return "字体与主题"
-        case .window: return "显示与排版"
-        case .format: return "编码与语法"
+        case .general: return L10n.t("启动与保存")
+        case .appearance: return L10n.t("字体与主题")
+        case .window: return L10n.t("显示与排版")
+        case .format: return L10n.t("编码与语法")
         }
     }
 
@@ -83,14 +83,14 @@ struct SettingsView: View {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(InterfaceStyle.accent)
-                Text("设置")
+                Text(L10n.t("设置"))
                     .font(.system(size: 15, weight: .semibold))
             }
             .padding(.horizontal, 14)
             .padding(.top, 18)
             .padding(.bottom, 20)
 
-            Text("工作区配置")
+            Text(L10n.t("工作区配置"))
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(InterfaceStyle.muted)
                 .padding(.horizontal, 14)
@@ -144,7 +144,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("LitePad")
                     .font(.system(size: 11, weight: .semibold))
-                Text("原生文本工作台")
+                Text(L10n.t("原生文本工作台"))
                     .font(.system(size: 9))
                     .foregroundStyle(InterfaceStyle.muted)
             }
@@ -176,7 +176,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("关闭设置")
+                .help(L10n.t("关闭设置"))
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -199,26 +199,26 @@ struct SettingsView: View {
     private var currentPane: some View {
         switch navigation.section {
         case .general:
-            SettingsCard(title: "启动与保存",
-                         subtitle: "控制工作区恢复、自动保存和外部文件变化",
+            SettingsCard(title: L10n.t("启动与保存"),
+                         subtitle: L10n.t("控制工作区恢复、自动保存和外部文件变化"),
                          icon: "arrow.clockwise") {
                 GeneralSettingsPane(popups: popups)
             }
         case .appearance:
-            SettingsCard(title: "字体与主题",
-                         subtitle: "调整代码阅读时的字体、语法配色和透明度",
+            SettingsCard(title: L10n.t("字体与主题"),
+                         subtitle: L10n.t("调整代码阅读时的字体、语法配色和透明度"),
                          icon: "eyeglasses") {
                 AppearanceSettingsPane()
             }
         case .window:
-            SettingsCard(title: "编辑器布局",
-                         subtitle: "管理窗口尺寸、辅助标记、换行和状态栏",
+            SettingsCard(title: L10n.t("编辑器布局"),
+                         subtitle: L10n.t("管理窗口尺寸、辅助标记、换行和状态栏"),
                          icon: "text.alignleft") {
                 WindowSettingsPane()
             }
         case .format:
-            SettingsCard(title: "编码与语法",
-                         subtitle: "设置新文稿的编码、行尾和默认语法",
+            SettingsCard(title: L10n.t("编码与语法"),
+                         subtitle: L10n.t("设置新文稿的编码、行尾和默认语法"),
                          icon: "doc.plaintext") {
                 FormatSettingsPane(popups: popups)
             }
@@ -672,14 +672,23 @@ private struct GeneralSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsRow("启动时：") {
+            SettingsRow(L10n.t("界面语言：")) {
+                SettingsPicker(title: L10n.t("界面语言"),
+                               selection: $settings.interfaceLanguage,
+                               options: InterfaceLanguage.allCases,
+                               label: \.displayName,
+                               width: 180,
+                               popups: popups)
+            }
+            SettingsDivider()
+            SettingsRow(L10n.t("启动时：")) {
                 VStack(alignment: .leading, spacing: 8) {
-                    LitePadToggle(title: "重新打开最后关闭的窗口",
+                    LitePadToggle(title: L10n.t("重新打开最后关闭的窗口"),
                                   isOn: $settings.restoreSessionOnLaunch)
                     HStack(spacing: 8) {
-                        Text("当无项目可以打开时：")
+                        Text(L10n.t("当无项目可以打开时："))
                             .foregroundStyle(.secondary)
-                        SettingsPicker(title: "启动动作",
+                        SettingsPicker(title: L10n.t("启动动作"),
                                        selection: $settings.launchAction,
                                        options: LaunchAction.allCases,
                                        label: \.displayName,
@@ -692,23 +701,23 @@ private struct GeneralSettingsPane: View {
                 }
             }
             SettingsDivider()
-            SettingsRow("文稿保存：") {
+            SettingsRow(L10n.t("文稿保存：")) {
                 VStack(alignment: .leading, spacing: 4) {
-                    LitePadToggle(title: "开启自动保存", isOn: $settings.autosaveEnabled)
-                    Text("编辑已保存的文件时自动写盘；未标题的文稿仍需手动保存。")
+                    LitePadToggle(title: L10n.t("开启自动保存"), isOn: $settings.autosaveEnabled)
+                    Text(L10n.t("编辑已保存的文件时自动写盘；未标题的文稿仍需手动保存。"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    LitePadToggle(title: "保存时删除行尾空白",
+                    LitePadToggle(title: L10n.t("保存时删除行尾空白"),
                                   isOn: $settings.trimTrailingWhitespaceOnSave)
-                    LitePadToggle(title: "保存时补齐末尾换行",
+                    LitePadToggle(title: L10n.t("保存时补齐末尾换行"),
                                   isOn: $settings.ensureFinalNewlineOnSave)
-                    Text("两项只在显式保存（含关闭标签与退出时的确认保存）前执行，自动保存不改动正文。"
-                         + "删除行尾空白只去掉空格与制表符（不换行空格、全角空格等不动），"
-                         + "与编辑菜单里的「删除行尾空白」同一口径。"
-                         + "两项都不是保义操作：删除行尾空白会破坏 Markdown 的行尾双空格（硬换行）与补丁文件的空行，"
-                         + "补齐末尾换行会改写补丁文件这类以末尾换行为语义的格式；"
-                         + "没有内置语法的扩展名（如 Markdown 的 .md）按「纯文本」归类，"
-                         + "需要保留时在下方按语法排除。")
+                    Text(L10n.t("两项只在显式保存（含关闭标签与退出时的确认保存）前执行，自动保存不改动正文。"
+                         + L10n.t("删除行尾空白只去掉空格与制表符（不换行空格、全角空格等不动），")
+                         + L10n.t("与编辑菜单里的「删除行尾空白」同一口径。")
+                         + L10n.t("两项都不是保义操作：删除行尾空白会破坏 Markdown 的行尾双空格（硬换行）与补丁文件的空行，")
+                         + L10n.t("补齐末尾换行会改写补丁文件这类以末尾换行为语义的格式；")
+                         + L10n.t("没有内置语法的扩展名（如 Markdown 的 .md）按「纯文本」归类，")
+                         + L10n.t("需要保留时在下方按语法排除。")))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -720,7 +729,7 @@ private struct GeneralSettingsPane: View {
                 }
             }
             SettingsDivider()
-            SettingsRow("当文稿被其他应用更改时：") {
+            SettingsRow(L10n.t("当文稿被其他应用更改时：")) {
                 SettingsRadioList(options: ExternalChangeAction.allCases,
                                   selection: $settings.externalChangeAction,
                                   label: \.displayName)
@@ -739,7 +748,7 @@ private struct AppearanceSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsRow("等宽字体：") {
+            SettingsRow(L10n.t("等宽字体：")) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Text("\(settings.editorFontDisplayName)  \(Int(settings.editorFontSize))")
@@ -758,14 +767,14 @@ private struct AppearanceSettingsPane: View {
                                     .strokeBorder(InterfaceStyle.borderStrong)
                             )
                         FontSizeStepper()
-                        Button("选择…") { chooseFont() }
+                        Button(L10n.t("选择…")) { chooseFont() }
                             .buttonStyle(PanelActionButtonStyle(tone: .neutral,
                                                                 minHeight: SettingsMetrics.fieldHeight))
                     }
-                    LitePadToggle(title: "连字", isOn: $settings.ligaturesEnabled)
+                    LitePadToggle(title: L10n.t("连字"), isOn: $settings.ligaturesEnabled)
                 }
             }
-            SettingsRow("行高：") {
+            SettingsRow(L10n.t("行高：")) {
                 HStack(spacing: 6) {
                     TextField("", value: $settings.lineHeightMultiple,
                               format: .number.precision(.fractionLength(0...2)))
@@ -774,22 +783,22 @@ private struct AppearanceSettingsPane: View {
                         .multilineTextAlignment(.trailing)
                     SettingsStepper(onIncrement: { bumpLineHeight(0.1) },
                                     onDecrement: { bumpLineHeight(-0.1) })
-                    Text("倍")
+                    Text(L10n.t("倍"))
                 }
             }
-            SettingsRow("外观：") {
+            SettingsRow(L10n.t("外观：")) {
                 RadioRow(options: AppearanceMode.allCases, selection: $settings.appearanceMode,
                          label: \.displayName)
             }
-            SettingsRow("语法主题：") {
+            SettingsRow(L10n.t("语法主题：")) {
                 RadioRow(options: SyntaxTheme.allCases, selection: $settings.syntaxTheme,
                          label: \.displayName)
             }
-            SettingsRow("顶栏与状态栏：") {
+            SettingsRow(L10n.t("顶栏与状态栏：")) {
                 RadioRow(options: StatusBarBackgroundStyle.allCases, selection: $settings.statusBarStyle,
                          label: \.displayName)
             }
-            SettingsRow("编辑器透明度：") {
+            SettingsRow(L10n.t("编辑器透明度：")) {
                 HStack(spacing: 8) {
                     Slider(value: $settings.editorOpacity, in: 10...100, step: 5)
                         .frame(width: 240)
@@ -878,38 +887,38 @@ private struct WindowSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsRow("窗口大小：") {
+            SettingsRow(L10n.t("窗口大小：")) {
                 HStack(alignment: .top, spacing: 10) {
-                    sizeField("自动", binding: widthBinding, caption: "宽度")
-                    Text("像素").font(.caption).foregroundStyle(.secondary).padding(.top, 5)
-                    sizeField("自动", binding: heightBinding, caption: "高度")
+                    sizeField(L10n.t("自动"), binding: widthBinding, caption: L10n.t("宽度"))
+                    Text(L10n.t("像素")).font(.caption).foregroundStyle(.secondary).padding(.top, 5)
+                    sizeField(L10n.t("自动"), binding: heightBinding, caption: L10n.t("高度"))
                 }
             }
             SettingsDivider()
-            SettingsRow("显示：") {
+            SettingsRow(L10n.t("显示：")) {
                 VStack(alignment: .leading, spacing: 6) {
-                    LitePadToggle(title: "行号", isOn: $settings.showLineNumbers)
+                    LitePadToggle(title: L10n.t("行号"), isOn: $settings.showLineNumbers)
                     VStack(alignment: .leading, spacing: 4) {
-                        LitePadToggle(title: "不可见元素", isOn: $settings.showInvisibles)
+                        LitePadToggle(title: L10n.t("不可见元素"), isOn: $settings.showInvisibles)
                         if settings.showInvisibles {
                             HStack(spacing: 14) {
-                                LitePadToggle(title: "行尾", isOn: $settings.invisibles.lineEndings)
-                                LitePadToggle(title: "制表符", isOn: $settings.invisibles.tabs)
-                                LitePadToggle(title: "空格", isOn: $settings.invisibles.spaces)
+                                LitePadToggle(title: L10n.t("行尾"), isOn: $settings.invisibles.lineEndings)
+                                LitePadToggle(title: L10n.t("制表符"), isOn: $settings.invisibles.tabs)
+                                LitePadToggle(title: L10n.t("空格"), isOn: $settings.invisibles.spaces)
                             }
                             .padding(.leading, 18)
                             HStack(spacing: 14) {
-                                LitePadToggle(title: "其他空白字符",
+                                LitePadToggle(title: L10n.t("其他空白字符"),
                                               isOn: $settings.invisibles.otherWhitespace)
-                                LitePadToggle(title: "其他控制字符",
+                                LitePadToggle(title: L10n.t("其他控制字符"),
                                               isOn: $settings.invisibles.otherControl)
                             }
                             .padding(.leading, 18)
                         }
                     }
-                    LitePadToggle(title: "缩进指示", isOn: $settings.showIndentGuides)
+                    LitePadToggle(title: L10n.t("缩进指示"), isOn: $settings.showIndentGuides)
                     HStack(spacing: 6) {
-                        LitePadToggle(title: "列位置页面指示：",
+                        LitePadToggle(title: L10n.t("列位置页面指示："),
                                       isOn: $settings.pageGuideEnabled)
                         TextField("", value: $settings.pageGuideColumn, format: .number)
                             .textFieldStyle(.plain)
@@ -920,32 +929,32 @@ private struct WindowSettingsPane: View {
                     .padding(.leading, 18)
                 }
             }
-            SettingsRow("当前行：") {
-                LitePadToggle(title: "改变背景颜色", isOn: $settings.highlightCurrentLine)
+            SettingsRow(L10n.t("当前行：")) {
+                LitePadToggle(title: L10n.t("改变背景颜色"), isOn: $settings.highlightCurrentLine)
             }
             SettingsDivider()
-            SettingsRow("缩进：") {
+            SettingsRow(L10n.t("缩进：")) {
                 VStack(alignment: .leading, spacing: 6) {
-                    LitePadToggle(title: "Tab 键插入空格", isOn: $settings.insertSpacesForTab)
+                    LitePadToggle(title: L10n.t("Tab 键插入空格"), isOn: $settings.insertSpacesForTab)
                     HStack(spacing: 6) {
-                        Text("缩进宽度：")
+                        Text(L10n.t("缩进宽度："))
                         TextField("", value: $settings.indentWidth, format: .number)
                             .textFieldStyle(.plain)
                             .settingsFieldFrame(width: 52)
                             .multilineTextAlignment(.trailing)
                         SettingsStepper(onIncrement: { settings.stepIndentWidth(by: 1) },
                                         onDecrement: { settings.stepIndentWidth(by: -1) })
-                        Text("个字符").font(.caption).foregroundStyle(.secondary)
+                        Text(L10n.t("个字符")).font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(.leading, 18)
                 }
             }
             SettingsDivider()
-            SettingsRow("换行：") {
+            SettingsRow(L10n.t("换行：")) {
                 VStack(alignment: .leading, spacing: 6) {
-                    LitePadToggle(title: "换行以适合编辑器宽度", isOn: $settings.wrapLines)
+                    LitePadToggle(title: L10n.t("换行以适合编辑器宽度"), isOn: $settings.wrapLines)
                     HStack(spacing: 6) {
-                        LitePadToggle(title: "自动换行缩进字符数：",
+                        LitePadToggle(title: L10n.t("自动换行缩进字符数："),
                                       isOn: $settings.wrapIndentEnabled)
                             .disabled(!settings.wrapLines)
                         TextField("", value: $settings.wrapIndentChars, format: .number)
@@ -953,16 +962,16 @@ private struct WindowSettingsPane: View {
                             .settingsFieldFrame(width: 52)
                             .multilineTextAlignment(.trailing)
                             .disabled(!settings.wrapLines || !settings.wrapIndentEnabled)
-                        Text("个空格").font(.caption).foregroundStyle(.secondary)
+                        Text(L10n.t("个空格")).font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(.leading, 18)
                 }
             }
-            SettingsRow("书写方向：") {
+            SettingsRow(L10n.t("书写方向：")) {
                 RadioRow(options: WritingDirectionOption.allCases, selection: $settings.writingDirection,
                          label: \.displayName)
             }
-            SettingsRow("额外滚动：") {
+            SettingsRow(L10n.t("额外滚动：")) {
                 HStack(spacing: 6) {
                     TextField("", value: $settings.extraScrollPercent,
                               format: .number.precision(.fractionLength(0)))
@@ -975,22 +984,22 @@ private struct WindowSettingsPane: View {
                 }
             }
             SettingsDivider()
-            SettingsRow("状态栏显示：") {
+            SettingsRow(L10n.t("状态栏显示：")) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 16) {
-                        LitePadToggle(title: "行数", isOn: $settings.statusBarLineCount)
-                        LitePadToggle(title: "位置", isOn: $settings.statusBarCaretOffset)
+                        LitePadToggle(title: L10n.t("行数"), isOn: $settings.statusBarLineCount)
+                        LitePadToggle(title: L10n.t("位置"), isOn: $settings.statusBarCaretOffset)
                     }
                     HStack(spacing: 16) {
-                        LitePadToggle(title: "字符数", isOn: $settings.statusBarCharCount)
-                        LitePadToggle(title: "当前行", isOn: $settings.statusBarCaretLine)
+                        LitePadToggle(title: L10n.t("字符数"), isOn: $settings.statusBarCharCount)
+                        LitePadToggle(title: L10n.t("当前行"), isOn: $settings.statusBarCaretLine)
                     }
                     HStack(spacing: 16) {
-                        LitePadToggle(title: "字数", isOn: $settings.statusBarWordCount)
-                        LitePadToggle(title: "当前列", isOn: $settings.statusBarCaretColumn)
+                        LitePadToggle(title: L10n.t("字数"), isOn: $settings.statusBarWordCount)
+                        LitePadToggle(title: L10n.t("当前列"), isOn: $settings.statusBarCaretColumn)
                     }
                     .frame(maxWidth: 220, alignment: .leading)
-                    LitePadToggle(title: "选区", isOn: $settings.statusBarSelectionCount)
+                    LitePadToggle(title: L10n.t("选区"), isOn: $settings.statusBarSelectionCount)
                 }
             }
         }
@@ -1044,8 +1053,8 @@ private struct FormatSettingsPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SettingsRow("默认行尾：") {
-                SettingsPicker(title: "默认行尾",
+            SettingsRow(L10n.t("默认行尾：")) {
+                SettingsPicker(title: L10n.t("默认行尾"),
                                selection: $settings.defaultLineEnding,
                                options: LineEnding.allCases,
                                label: lineEndingName,
@@ -1053,25 +1062,25 @@ private struct FormatSettingsPane: View {
                                popups: popups)
             }
             SettingsDivider()
-            SettingsRow("默认文本编码：") {
-                SettingsPicker(title: "默认文本编码",
+            SettingsRow(L10n.t("默认文本编码：")) {
+                SettingsPicker(title: L10n.t("默认文本编码"),
                                selection: $settings.defaultEncoding,
                                options: TextEncoding.allCases,
                                label: \.displayName,
                                width: 260,
                                popups: popups)
             }
-            SettingsRow("编码优先级：") {
+            SettingsRow(L10n.t("编码优先级：")) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Button("编辑列表…") { sheet.isPresented = true }
+                    Button(L10n.t("编辑列表…")) { sheet.isPresented = true }
                         .buttonStyle(PanelActionButtonStyle(tone: .neutral))
-                    LitePadToggle(title: "参考文稿中的编码声明",
+                    LitePadToggle(title: L10n.t("参考文稿中的编码声明"),
                                   isOn: $settings.respectCharsetDeclaration)
                 }
             }
             SettingsDivider()
-            SettingsRow("默认语法：") {
-                SettingsPicker(title: "默认语法",
+            SettingsRow(L10n.t("默认语法：")) {
+                SettingsPicker(title: L10n.t("默认语法"),
                                selection: Binding<LanguageDefinition>(
                                    get: { settings.defaultLanguage },
                                    set: { settings.setDefaultLanguage($0) }
@@ -1092,7 +1101,7 @@ private struct FormatSettingsPane: View {
         switch ending {
         case .lf: return "macOS / Unix (LF)"
         case .crlf: return "Windows (CRLF)"
-        case .cr: return "经典 Mac (CR)"
+        case .cr: return L10n.t("经典 Mac (CR)")
         }
     }
 }
@@ -1114,35 +1123,38 @@ private struct EncodingPrioritySheet: View {
     }
 
     /// 可参与自动检测的编码；BOM 变体与宽字符端序由固定探测处理
-    private let candidates: [TextEncoding] = [.utf8, .gb18030, .utf16LE, .utf16BE, .utf32LE, .utf32BE]
+    private let candidates: [TextEncoding] = [
+        .utf8, .gb18030, .big5, .shiftJIS, .eucKR, .latin1,
+        .utf16LE, .utf16BE, .utf32LE, .utf32BE
+    ]
 
     var body: some View {
         VStack(spacing: 14) {
-            Text("无 BOM 的文件按以下顺序依次尝试解码，顺序即优先级。")
+            Text(L10n.t("无 BOM 的文件按以下顺序依次尝试解码，顺序即优先级。"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(alignment: .top, spacing: 16) {
                 SettingsSelectionList(options: settings.encodingPriority,
                                       selection: $state.selection,
-                                      title: "编码优先级",
+                                      title: L10n.t("编码优先级"),
                                       label: \.displayName,
                                       width: 300,
                                       height: 190)
                 VStack(spacing: 8) {
-                    listButton("上移", "chevron.up") { move(-1) }
-                    listButton("下移", "chevron.down") { move(1) }
-                    listButton("移除", "minus") { remove() }
+                    listButton(L10n.t("上移"), "chevron.up") { move(-1) }
+                    listButton(L10n.t("下移"), "chevron.down") { move(1) }
+                    listButton(L10n.t("移除"), "minus") { remove() }
                 }
                 .padding(.top, 4)
             }
             HStack {
-                SettingsPicker(title: "添加编码",
+                SettingsPicker(title: L10n.t("添加编码"),
                                selection: addBinding,
                                options: remainingCandidates,
                                label: \.displayName,
                                width: 320,
                                popups: popups)
-                Button("添加") {
+                Button(L10n.t("添加")) {
                     settings.updateEncodingPriority(settings.encodingPriority + [addBinding.wrappedValue])
                 }
                 .buttonStyle(PanelActionButtonStyle(tone: .accent))
@@ -1151,7 +1163,7 @@ private struct EncodingPrioritySheet: View {
             Divider()
             HStack {
                 Spacer()
-                Button("完成") { onClose() }
+                Button(L10n.t("完成")) { onClose() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(PanelActionButtonStyle(tone: .accent))
             }

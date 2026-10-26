@@ -9,8 +9,8 @@ enum ConvertDirection: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .encode: return "编码"
-        case .decode: return "解码"
+        case .encode: return L10n.t("编码")
+        case .decode: return L10n.t("解码")
         }
     }
 }
@@ -40,8 +40,8 @@ enum NumericBase: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .decimal: return "十进制"
-        case .hexadecimal: return "十六进制"
+        case .decimal: return L10n.t("十进制")
+        case .hexadecimal: return L10n.t("十六进制")
         }
     }
 
@@ -339,7 +339,7 @@ enum URLPercentConverter {
             }
         }
         guard let decoded = String(bytes: result, encoding: .utf8) else {
-            return .failure("解码结果不是有效的 UTF-8 文本")
+            return .failure(L10n.t("解码结果不是有效的 UTF-8 文本"))
         }
         return .success(decoded)
     }
@@ -375,15 +375,15 @@ enum Base64Converter {
             .replacingOccurrences(of: "_", with: "/")
         let remainder = normalized.count % 4
         // 长度 % 4 == 1 不是合法 Base64，补齐也无解
-        guard remainder != 1 else { return .failure("不是有效的 Base64 文本") }
+        guard remainder != 1 else { return .failure(L10n.t("不是有效的 Base64 文本")) }
         if remainder > 0 {
             normalized += String(repeating: "=", count: 4 - remainder)
         }
         guard let data = Data(base64Encoded: normalized) else {
-            return .failure("不是有效的 Base64 文本")
+            return .failure(L10n.t("不是有效的 Base64 文本"))
         }
         guard let decoded = String(data: data, encoding: .utf8) else {
-            return .failure("解码结果不是有效的 UTF-8 文本")
+            return .failure(L10n.t("解码结果不是有效的 UTF-8 文本"))
         }
         return .success(decoded)
     }

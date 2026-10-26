@@ -265,7 +265,7 @@ final class RecoveryStore {
 
     /// 文件不存在：全新安装或恢复区尚未写过。Cocoa 与 POSIX 的「没有这个文件」都算，
     /// 内层错误也看一眼——`Data(contentsOf:)` 有时把 ENOENT 包在 Cocoa 错误里
-    private static func isMissingFile(_ error: Error) -> Bool {
+    static func isMissingFile(_ error: Error) -> Bool {
         let nsError = error as NSError
         if nsError.domain == NSCocoaErrorDomain,
            nsError.code == NSFileReadNoSuchFileError || nsError.code == NSFileNoSuchFileError {

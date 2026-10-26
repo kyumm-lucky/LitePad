@@ -3,7 +3,7 @@
 set -euo pipefail
 
 APP_NAME="LitePad"
-VERSION="0.1.0"
+VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist 2>/dev/null || echo "0.0.0")
 cd "$(dirname "$0")/.."
 DMG_NAME="build/$APP_NAME-$VERSION.dmg"
 

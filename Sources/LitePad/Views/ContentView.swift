@@ -23,6 +23,9 @@ struct ContentView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             HStack(spacing: 0) {
+                if let folder = session.workspaceFolder {
+                    WorkspaceSidebarView(folder: folder) { session.closeWorkspace() }
+                }
                 mainColumn
                 if let tab = session.selectedTab, session.activeTool != nil {
                     ToolsDrawer(tools: session.tools,
@@ -106,14 +109,21 @@ struct ContentView: View {
     private var mainColumn: some View {
         VStack(spacing: 0) {
             TabBarView()
-            if let tab = session.selectedTab {
-                // 切换标签时以 id 重建编辑器，避免不同标签间文本与选区串扰
-                CodeTextView(tab: tab, session: session)
-                    .id(tab.id)
-                    // 查找面板挂编辑区右上；工具抽屉打开时正好落在抽屉左侧
-                    .overlay(alignment: .topTrailing) {
-                        FindPanelHost(tab: tab)
+            if let split = session.splitTab, let tab = session.selectedTab {
+                GeometryReader { proxy in
+                    HStack(spacing: 0) {
+                        editorPane(for: tab)
+                        SplitResizeHandle { delta in
+                            session.resizeSplit(to: session.splitFraction
+                                - delta / max(proxy.size.width, 1))
+                        }
+                        .frame(width: 7)
+                        referencePane(for: split)
+                            .frame(width: max(220, proxy.size.width * session.splitFraction))
                     }
+                }
+            } else if let tab = session.selectedTab {
+                editorPane(for: tab)
             } else {
                 emptyView
             }
@@ -133,6 +143,59 @@ struct ContentView: View {
                 dropState.isTargeted = targeted
             }
             .overlay { dropHighlight }
+    }
+
+    /// 主编辑区：切换标签时以 id 重建编辑器，避免不同标签间文本与选区串扰；
+    /// 查找面板挂在编辑区右上（工具抽屉打开时正好落在抽屉左侧）
+    @ViewBuilder
+    private func editorPane(for tab: EditorTab) -> some View {
+        CodeTextView(tab: tab, session: session)
+            .id(tab.id)
+            .overlay(alignment: .topTrailing) {
+                FindPanelHost(tab: tab)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// 右侧参考栏：只读展示另一张标签，顶部标题 + 关闭按钮，左缘可拖拽调宽
+    private func referencePane(for tab: EditorTab) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "rectangle.split.2x1")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(InterfaceStyle.accent)
+                Text(tab.displayName)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(L10n.t("参考栏 · 只读"))
+                    .font(.system(size: 9))
+                    .foregroundStyle(InterfaceStyle.muted)
+                Spacer(minLength: 0)
+                Button {
+                    session.closeSplit()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(InterfaceStyle.muted)
+                .help(L10n.t("关闭参考栏"))
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(BarBackground(style: settings.statusBarStyle))
+
+            CodeTextView(tab: tab, session: session, isReadOnly: true)
+                .id(tab.id)
+        }
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(InterfaceStyle.borderStrong)
+                .frame(width: 1)
+        }
     }
 
     /// 文件拖入时的接收提示：整片可投放区一起亮（编辑区与主栏各上报自己的悬停状态，
@@ -169,22 +232,22 @@ struct ContentView: View {
         let option: (title: String, options: [String], selectedIndex: Int?, commit: (Int) -> Void)
         switch kind {
         case .encoding:
-            option = (title: "文本编码",
+            option = (title: L10n.t("文本编码"),
                       options: TextEncoding.allCases.map(\.displayName),
                       selectedIndex: TextEncoding.allCases.firstIndex(of: tab.encoding),
                       commit: { index in tab.encoding = TextEncoding.allCases[index] })
         case .lineEnding:
-            option = (title: "换行符",
+            option = (title: L10n.t("换行符"),
                       options: LineEnding.allCases.map(\.displayName),
                       selectedIndex: LineEnding.allCases.firstIndex(of: tab.lineEnding),
                       commit: { index in tab.lineEnding = LineEnding.allCases[index] })
         case .language:
-            option = (title: "语言",
+            option = (title: L10n.t("语言"),
                       options: LanguageDefinition.all.map(\.displayName),
                       selectedIndex: LanguageDefinition.all.firstIndex(of: tab.language),
                       commit: { index in tab.language = LanguageDefinition.all[index] })
         case .tools:
-            option = (title: "工具",
+            option = (title: L10n.t("工具"),
                       options: TextToolKind.allCases.map(\.displayName),
                       selectedIndex: session.activeTool.flatMap { TextToolKind.allCases.firstIndex(of: $0) },
                       commit: { index in session.openTool(TextToolKind.allCases[index]) })
@@ -192,8 +255,8 @@ struct ContentView: View {
         // 编码面板多一条底部动作：上面的选项只改保存编码，这一项才真的按它重读磁盘正文（R5）。
         // 未标题标签没有文件可读，动作置灰
         let action: PanelAction? = kind == .encoding
-            ? PanelAction(title: "按此编码重新载入",
-                          detail: "选项只改保存编码，此项按它重读磁盘正文",
+            ? PanelAction(title: L10n.t("按此编码重新载入"),
+                          detail: L10n.t("选项只改保存编码，此项按它重读磁盘正文"),
                           isEnabled: tab.fileURL != nil,
                           perform: {
                               // 与选项行同一收尾：动作发出后立刻收起面板，
@@ -226,9 +289,9 @@ struct ContentView: View {
             Image(systemName: "doc.text")
                 .font(.system(size: 40))
                 .foregroundStyle(.quaternary)
-            Text("没有打开的标签页")
+            Text(L10n.t("没有打开的标签页"))
                 .foregroundStyle(.secondary)
-            Button("新建标签页") { session.newTab() }
+            Button(L10n.t("新建标签页")) { session.newTab() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(FrostedSurface(shape: Rectangle()))
@@ -268,7 +331,7 @@ private struct WindowTitleSync: View {
     @ObservedObject var tab: EditorTab
 
     private var title: String {
-        tab.displayName + (tab.isDirty ? " — 已编辑" : "")
+        tab.displayName + (tab.isDirty ? L10n.t(" — 已编辑") : "")
     }
 
     var body: some View {
@@ -376,29 +439,43 @@ private struct StatusBarView: View {
     var body: some View {
         HStack(spacing: 12) {
             if settings.statusBarLineCount {
-                Text("行：\(tab.stats.totalLines)")
+                Text(L10n.format("行：%d", tab.stats.totalLines))
             }
             if settings.statusBarCharCount {
-                Text("字符：\(tab.stats.characterCount)")
+                Text(L10n.format("字符：%d", tab.stats.characterCount))
             }
             if settings.statusBarWordCount {
-                Text("字：\(tab.stats.wordCount)")
+                Text(L10n.format("字：%d", tab.stats.wordCount))
             }
             // 只在真有选区时出现：字符数为 0 即无选区（见 DocumentStats）
             if settings.statusBarSelectionCount, tab.stats.selectionCharacterCount > 0 {
-                Text("选区：\(tab.stats.selectionCharacterCount) 字符 · \(tab.stats.selectionWordCount) 词")
+                Text(L10n.format("选区：%d 字符 · %d 词", tab.stats.selectionCharacterCount, tab.stats.selectionWordCount))
             }
             if settings.statusBarCaretOffset {
-                Text("位置：\(tab.stats.caretOffset)")
+                Text(L10n.format("位置：%d", tab.stats.caretOffset))
             }
             if settings.statusBarCaretLine {
-                Text("行：\(tab.stats.caretLine)")
+                Text(L10n.format("行：%d", tab.stats.caretLine))
             }
             if settings.statusBarCaretColumn {
-                Text("列：\(tab.stats.caretColumn)")
+                Text(L10n.format("列：%d", tab.stats.caretColumn))
             }
             Spacer()
-            Text(tab.isDirty ? "未保存" : "-")
+            if tab.isRecoveryRestored {
+                Text(L10n.t("恢复的草稿"))
+                    .foregroundStyle(Color.orange)
+            }
+            if tab.isEncodingUnverified {
+                Text(L10n.t("编码未确认"))
+                    .foregroundStyle(Color.orange)
+            }
+            if tab.isLargeDocument {
+                Text(L10n.t("大文件模式"))
+            }
+            if !tab.foldedRanges.isEmpty {
+                Text(L10n.format("折叠：%d", tab.foldedRanges.count))
+            }
+            Text(tab.isDirty ? L10n.t("未保存") : "-")
             HStack(spacing: 0) {
                 StatusBarMenu(label: tab.language.displayName, onOpen: { onOpen(.language) })
                 statusBarMenuSeparator
@@ -534,5 +611,49 @@ private final class MenuButtonNSView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         onOpen?()
+    }
+}
+
+/// 参考栏左缘的分隔条：只负责水平拖拽换算，宽度由会话按比例夹取
+private struct SplitResizeHandle: NSViewRepresentable {
+    let onDrag: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        HandleView(onDrag: onDrag)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? HandleView)?.onDrag = onDrag
+    }
+
+    private final class HandleView: NSView {
+        var onDrag: (CGFloat) -> Void
+        private var lastX: CGFloat = 0
+
+        init(onDrag: @escaping (CGFloat) -> Void) {
+            self.onDrag = onDrag
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            lastX = convert(event.locationInWindow, from: nil).x
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            let x = convert(event.locationInWindow, from: nil).x
+            onDrag(x - lastX)
+            lastX = x
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            NSColor.separatorColor.setFill()
+            NSRect(x: bounds.midX - 0.5, y: 0, width: 1, height: bounds.height).fill()
+        }
     }
 }

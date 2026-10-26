@@ -1,9 +1,15 @@
 import AppKit
 
-/// 行号栏（骨架版）：每次绘制从可见首行重新推算行号，
-/// 行号推算是 O(n) 全文扫描，大文件场景待优化（可改为增量缓存行起点）。
+/// 行号栏：行号按可见区首字符二分查找，行首偏移表在文本编辑后失效并重建，
+/// 绘制不再是每次全文扫描
 final class LineNumberRulerView: NSRulerView {
     private weak var textView: NSTextView?
+    /// 行首偏移表（含 0）：正文编辑后由文本存储通知清空，下次绘制重建
+    private var lineStarts: [Int] = []
+    /// 书签所在行的行首偏移：闭包从标签读，行号栏不直接持有标签
+    var bookmarkOffsets: (() -> Set<Int>)?
+    /// 折叠块所在行号：在行号右侧画一个小三角，提示该行下面藏着内容
+    var foldedOwnerLines: (() -> Set<Int>)?
     private let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
     /// 行号栏底色跟随编辑器透明度，半透明时不产生整块白色遮挡。
     /// 底色是编辑器同一块背景，不随语法主题走；行号与分隔线随主题解析
@@ -17,6 +23,11 @@ final class LineNumberRulerView: NSRulerView {
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
         clientView = textView
         ruleThickness = 46
+    }
+
+    /// 正文编辑后由协调器调用：行首偏移表失效，下次绘制重建
+    func invalidateLineStarts() {
+        lineStarts.removeAll(keepingCapacity: true)
     }
 
     @available(*, unavailable)
@@ -56,6 +67,32 @@ final class LineNumberRulerView: NSRulerView {
         ]
         let labelHeight = ("0" as NSString).size(withAttributes: attributes).height
 
+        /// 行首偏移表：首次绘制时扫一遍，之后命中缓存；文本编辑由通知清空
+        func lineStartTable() -> [Int] {
+            if !lineStarts.isEmpty { return lineStarts }
+            var offsets: [Int] = [0]
+            var index = 0
+            while index < content.length {
+                if content.character(at: index) == 0x0A {
+                    offsets.append(index + 1)
+                }
+                index += 1
+            }
+            lineStarts = offsets
+            return offsets
+        }
+
+        func lineNumber(at location: Int, in content: NSString) -> Int {
+            let offsets = lineStartTable()
+            var low = 0
+            var high = offsets.count - 1
+            while low < high {
+                let mid = (low + high + 1) / 2
+                if offsets[mid] <= location { low = mid } else { high = mid - 1 }
+            }
+            return low + 1
+        }
+
         func drawNumber(_ number: Int, atY y: CGFloat) {
             let label = String(number)
             let size = label.size(withAttributes: attributes)
@@ -76,8 +113,7 @@ final class LineNumberRulerView: NSRulerView {
         let visibleChars = layoutManager.characterRange(forGlyphRange: visibleGlyphs, actualGlyphRange: nil)
         guard visibleChars.location != NSNotFound else { return }
 
-        var lineNumber = content.substring(to: visibleChars.location)
-            .components(separatedBy: "\n").count
+        var lineNumber = lineNumber(at: visibleChars.location, in: content)
         var charIndex = visibleChars.location
         let visibleEnd = NSMaxRange(visibleChars)
         var lastFragment: NSRect?
@@ -89,6 +125,23 @@ final class LineNumberRulerView: NSRulerView {
             if glyphs.location != NSNotFound, glyphs.length > 0 {
                 let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
                 drawNumber(lineNumber, atY: baseY + fragment.minY + (fragment.height - labelHeight) / 2)
+                if let bookmarkOffsets, bookmarkOffsets().contains(charIndex) {
+                    NSColor.controlAccentColor.setFill()
+                    let dot = NSRect(x: 7,
+                                     y: baseY + fragment.minY + fragment.height / 2 - 2.5,
+                                     width: 5, height: 5)
+                    NSBezierPath(ovalIn: dot).fill()
+                }
+                if let foldedOwnerLines, foldedOwnerLines().contains(lineNumber) {
+                    palette.gutterLabel.setFill()
+                    let centerY = baseY + fragment.minY + fragment.height / 2
+                    let triangle = NSBezierPath()
+                    triangle.move(to: NSPoint(x: 13, y: centerY - 3))
+                    triangle.line(to: NSPoint(x: 13, y: centerY + 3))
+                    triangle.line(to: NSPoint(x: 18, y: centerY))
+                    triangle.close()
+                    triangle.fill()
+                }
                 lastFragment = fragment
                 lineNumber += 1
             }

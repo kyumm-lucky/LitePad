@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Notepad++ 式页内标签栏：标签可点击切换、单个关闭，"+" 按钮新建，右端齿轮打开设置
 struct TabBarView: View {
@@ -16,7 +17,12 @@ struct TabBarView: View {
                             tab: tab,
                             isSelected: index == session.selectedTabIndex,
                             onSelect: { session.selectedTabIndex = index },
-                            onClose: { session.closeTab(at: index) }
+                            onClose: { session.closeTab(at: index) },
+                            onDropTab: { identifier in
+                                guard let source = UUID(uuidString: identifier),
+                                      let target = session.tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+                                session.moveTab(id: source, to: target)
+                            }
                         )
                         .contextMenu { tabContextMenu(at: index) }
                     }
@@ -28,7 +34,7 @@ struct TabBarView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .help("新建标签页")
+                    .help(L10n.t("新建标签页"))
                 }
                 .padding(.horizontal, 8)
             }
@@ -37,7 +43,7 @@ struct TabBarView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(session.isSettingsPresented ? Color.accentColor : Color.secondary)
                 .animation(Motion.panel, value: session.isSettingsPresented)
-                .help("设置")
+                .help(L10n.t("设置"))
 
             // 工具入口：扳手按钮，展开的下拉与状态栏下拉同一套面板样式
             toolsButton
@@ -45,7 +51,7 @@ struct TabBarView: View {
                 .foregroundStyle(toolsButtonActive ? Color.accentColor : Color.secondary)
                 // 配色与图标转动共用一条弹簧：按钮"拧一下"的手感与下拉、抽屉同一拍
                 .animation(Motion.panel, value: toolsButtonActive)
-                .help("工具")
+                .help(L10n.t("工具"))
                 .padding(.trailing, 6)
         }
         .frame(height: 34)
@@ -69,19 +75,26 @@ struct TabBarView: View {
     private func tabContextMenu(at index: Int) -> some View {
         let targets = session.tabCloseTargets(at: index)
         let tab = session.tabs.indices.contains(index) ? session.tabs[index] : nil
-        Button("关闭当前文件") { session.closeTabs(at: targets.current, selecting: tab) }
-        Button("关闭非当前文件") { session.closeTabs(at: targets.others, selecting: tab) }
+        Button(L10n.t("关闭当前文件")) { session.closeTabs(at: targets.current, selecting: tab) }
+        Button(L10n.t("关闭非当前文件")) { session.closeTabs(at: targets.others, selecting: tab) }
             .disabled(targets.others.isEmpty)
         Divider()
-        Button("关闭左边所有") { session.closeTabs(at: targets.left, selecting: tab) }
+        Button(L10n.t("关闭左边所有")) { session.closeTabs(at: targets.left, selecting: tab) }
             .disabled(targets.left.isEmpty)
-        Button("关闭右边所有") { session.closeTabs(at: targets.right, selecting: tab) }
+        Button(L10n.t("关闭右边所有")) { session.closeTabs(at: targets.right, selecting: tab) }
             .disabled(targets.right.isEmpty)
-        Button("关闭所有") { session.closeTabs(at: targets.all, selecting: tab) }
+        Button(L10n.t("关闭所有")) { session.closeTabs(at: targets.all, selecting: tab) }
         Divider()
         // 未标题标签没有文件可定位，置灰；文件已从磁盘消失时由会话给一次明确提示
-        Button("打开文件所在位置") { session.revealInFinder(tab) }
+        Button(L10n.t("打开文件所在位置")) { session.revealInFinder(tab) }
             .disabled(tab?.fileURL == nil)
+        Divider()
+        Button(L10n.t("在右侧参考栏打开")) {
+            if let tab { session.openInSplit(tab) }
+        }
+        .disabled(tab == nil || index == session.selectedTabIndex)
+        Button(L10n.t("关闭右侧参考栏")) { session.closeSplit() }
+            .disabled(session.splitTab == nil)
     }
 
     /// 右上角设置按钮：打开主窗口左侧设置抽屉
@@ -98,7 +111,7 @@ struct TabBarView: View {
             .font(.system(size: 12, weight: .medium))
             .frame(width: 26, height: 22)
             .contentShape(Rectangle())
-            .accessibilityLabel("设置")
+            .accessibilityLabel(L10n.t("设置"))
     }
 
     /// 扳手按钮：展开 / 收起工具下拉（其中列出全部工具，当前打开的一项带勾选）。
@@ -112,7 +125,7 @@ struct TabBarView: View {
                 .rotationEffect(.degrees(toolsButtonActive ? -20 : 0))
                 .frame(width: 26, height: 22)
                 .contentShape(Rectangle())
-                .accessibilityLabel("工具")
+                .accessibilityLabel(L10n.t("工具"))
         }
     }
 
@@ -123,7 +136,10 @@ private struct TabButtonView: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
+    /// 拖拽落到本标签时回调来源标签的 id（字符串形式）
+    let onDropTab: (String) -> Void
     @StateObject private var hover = InterfaceHoverState()
+    @StateObject private var dropState = TabDropState()
 
     var body: some View {
         HStack(spacing: 6) {
@@ -143,7 +159,7 @@ private struct TabButtonView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help("关闭标签页")
+            .help(L10n.t("关闭标签页"))
         }
         .padding(.horizontal, 10)
         .frame(height: 26)
@@ -167,17 +183,41 @@ private struct TabButtonView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onHover { hover.isHovered = $0 }
+        // 拖拽排序：标签自带 id，落到哪张标签就把来源移动到它的索引处
+        .onDrag { NSItemProvider(object: tab.id.uuidString as NSString) }
+        .onDrop(of: [UTType.text], isTargeted: $dropState.isTargeted) { providers in
+            guard let provider = providers.first else { return false }
+            provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let identifier = object as? String else { return }
+                DispatchQueue.main.async { onDropTab(identifier) }
+            }
+            return true
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(dropState.isTargeted ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
         .animation(Motion.control, value: isSelected)
     }
 
     private var iconSymbol: String {
         switch tab.language.id {
         case "python": return "chevron.left.forwardslash.chevron.right"
-        case "java", "javascript": return "curlybraces"
+        case "java", "javascript", "c", "cpp", "csharp", "go", "rust":
+            return "curlybraces"
         case "html", "xml": return "chevron.left.chevron.right"
         case "sql": return "cylinder"
         case "json": return "curlybraces.square"
+        case "css": return "paintbrush"
+        case "yaml": return "list.bullet"
+        case "shell": return "terminal"
+        case "markdown": return "text.alignleft"
         default: return "doc.text"
         }
     }
+}
+
+/// 标签拖拽落点状态：本机工具链没有 SwiftUI 宏，@State 改用轻量对象承载
+private final class TabDropState: ObservableObject {
+    @Published var isTargeted = false
 }

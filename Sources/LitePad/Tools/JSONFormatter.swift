@@ -9,8 +9,8 @@ enum JSONIndent: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .twoSpaces: return "2 空格"
-        case .fourSpaces: return "4 空格"
+        case .twoSpaces: return L10n.t("2 空格")
+        case .fourSpaces: return L10n.t("4 空格")
         }
     }
 
@@ -118,9 +118,9 @@ private struct JSONRewriter {
         } catch let error as SyntaxError {
             let atLine = error.line ?? line
             let atColumn = error.column ?? column
-            return .failure("第 \(atLine) 行第 \(atColumn) 列：\(error.message)")
+            return .failure(L10n.format("第 %d 行第 %d 列：%@", atLine, atColumn, error.message))
         } catch {
-            return .failure("JSON 处理失败")
+            return .failure(L10n.t("JSON 处理失败"))
         }
         return .success(String(decoding: output, as: UTF8.self))
     }
@@ -142,13 +142,13 @@ private struct JSONRewriter {
             let byte = bytes[index]
 
             if byte == JSONMark.slash {
-                throw SyntaxError(message: "JSON 不支持注释")
+                throw SyntaxError(message: L10n.t("JSON 不支持注释"))
             }
 
             switch expect {
             case .separator:
                 guard !frames.isEmpty else {
-                    throw SyntaxError(message: "JSON 值之后还有多余内容，实际是\(quote(byte))")
+                    throw SyntaxError(message: L10n.format("JSON 值之后还有多余内容，实际是%@", quote(byte)))
                 }
                 if byte == JSONMark.comma {
                     advance()
@@ -157,7 +157,7 @@ private struct JSONRewriter {
                     continue
                 }
                 guard isCloser(byte) else {
-                    throw SyntaxError(message: "值之后需要逗号或闭合符，实际是\(quote(byte))")
+                    throw SyntaxError(message: L10n.format("值之后需要逗号或闭合符，实际是%@", quote(byte)))
                 }
                 try readCloser(byte, frames: &frames, expect: &expect, afterComma: afterComma)
 
@@ -167,7 +167,7 @@ private struct JSONRewriter {
                     continue
                 }
                 guard byte == JSONMark.quote else {
-                    throw SyntaxError(message: "对象的键必须是双引号字符串，实际是\(quote(byte))")
+                    throw SyntaxError(message: L10n.format("对象的键必须是双引号字符串，实际是%@", quote(byte)))
                 }
                 beginElement(in: &frames)
                 output.append(contentsOf: try readString())
@@ -176,7 +176,7 @@ private struct JSONRewriter {
 
             case .colon:
                 guard byte == JSONMark.colon else {
-                    throw SyntaxError(message: "键与值之间需要冒号，实际是\(quote(byte))")
+                    throw SyntaxError(message: L10n.format("键与值之间需要冒号，实际是%@", quote(byte)))
                 }
                 advance()
                 output.append(JSONMark.colon)
@@ -202,9 +202,9 @@ private struct JSONRewriter {
         }
 
         if let frame = frames.last {
-            let kind = frame.isObject ? "对象" : "数组"
+            let kind = frame.isObject ? L10n.t("对象") : L10n.t("数组")
             let closer = frame.isObject ? "}" : "]"
-            throw SyntaxError(message: "\(kind)没有闭合，缺少 \(closer)",
+            throw SyntaxError(message: L10n.format("%@没有闭合，缺少 %@", kind, closer),
                               line: frame.openLine, column: frame.openColumn)
         }
     }
@@ -231,12 +231,12 @@ private struct JSONRewriter {
             output.append(contentsOf: try readNumber())
             return .separator
         case JSONMark.singleQuote:
-            throw SyntaxError(message: "JSON 的字符串必须用双引号，不能用单引号")
+            throw SyntaxError(message: L10n.t("JSON 的字符串必须用双引号，不能用单引号"))
         case let other where isLetter(other):
             try readLiteral()
             return .separator
         default:
-            throw SyntaxError(message: "需要一个 JSON 值，实际是\(quote(byte))")
+            throw SyntaxError(message: L10n.format("需要一个 JSON 值，实际是%@", quote(byte)))
         }
     }
 
@@ -249,7 +249,7 @@ private struct JSONRewriter {
             for _ in token { advance() }
             return
         }
-        throw SyntaxError(message: "JSON 只接受 true / false / null，实际是“\(readWord())”")
+        throw SyntaxError(message: L10n.format("JSON 只接受 true / false / null，实际是“%@”", readWord()))
     }
 
     /// 读一处双引号字符串（含转义），原样返回
@@ -260,7 +260,7 @@ private struct JSONRewriter {
         advance()  // 开引号
         while true {
             guard index < bytes.count else {
-                throw SyntaxError(message: "字符串没有闭合", line: startLine, column: startColumn)
+                throw SyntaxError(message: L10n.t("字符串没有闭合"), line: startLine, column: startColumn)
             }
             let byte = bytes[index]
             if byte == JSONMark.quote {
@@ -274,7 +274,7 @@ private struct JSONRewriter {
             }
             // JSON 规定字符串里的控制字符（raw 换行、制表符等）必须转义
             if byte < 0x20 {
-                throw SyntaxError(message: "字符串里不能直接出现控制字符，请写成 \\n \\t \\uXXXX 等转义")
+                throw SyntaxError(message: L10n.t("字符串里不能直接出现控制字符，请写成 \\n \\t \\uXXXX 等转义"))
             }
             advance()
         }
@@ -283,7 +283,7 @@ private struct JSONRewriter {
     /// 读一处转义（反斜杠已消费）
     private mutating func readEscape(startLine: Int, startColumn: Int) throws {
         guard index < bytes.count else {
-            throw SyntaxError(message: "字符串没有闭合", line: startLine, column: startColumn)
+            throw SyntaxError(message: L10n.t("字符串没有闭合"), line: startLine, column: startColumn)
         }
         switch bytes[index] {
         case JSONMark.quote, JSONMark.backslash, JSONMark.slash,
@@ -293,12 +293,12 @@ private struct JSONRewriter {
             advance()
             for _ in 0..<4 {
                 guard index < bytes.count, isHexDigit(bytes[index]) else {
-                    throw SyntaxError(message: "\\u 转义需要 4 位十六进制数字")
+                    throw SyntaxError(message: L10n.t("\\u 转义需要 4 位十六进制数字"))
                 }
                 advance()
             }
         default:
-            throw SyntaxError(message: "无法识别的转义：\\\(describe(bytes[index]))")
+            throw SyntaxError(message: L10n.format("无法识别的转义：\\%@", describe(bytes[index])))
         }
     }
 
@@ -311,13 +311,13 @@ private struct JSONRewriter {
         if bytes[index] == JSONMark.minus {
             advance()
             guard index < bytes.count, isDigit(bytes[index]) else {
-                throw SyntaxError(message: "负号之后需要数字", line: startLine, column: startColumn)
+                throw SyntaxError(message: L10n.t("负号之后需要数字"), line: startLine, column: startColumn)
             }
         }
         if bytes[index] == JSONMark.zero {
             advance()
             guard index >= bytes.count || !isDigit(bytes[index]) else {
-                throw SyntaxError(message: "数字不能有前导零", line: startLine, column: startColumn)
+                throw SyntaxError(message: L10n.t("数字不能有前导零"), line: startLine, column: startColumn)
             }
         } else {
             while index < bytes.count, isDigit(bytes[index]) { advance() }
@@ -326,7 +326,7 @@ private struct JSONRewriter {
         if index < bytes.count, bytes[index] == JSONMark.dot {
             advance()
             guard index < bytes.count, isDigit(bytes[index]) else {
-                throw SyntaxError(message: "小数点后需要数字", line: startLine, column: startColumn)
+                throw SyntaxError(message: L10n.t("小数点后需要数字"), line: startLine, column: startColumn)
             }
             while index < bytes.count, isDigit(bytes[index]) { advance() }
         }
@@ -337,14 +337,14 @@ private struct JSONRewriter {
                 advance()
             }
             guard index < bytes.count, isDigit(bytes[index]) else {
-                throw SyntaxError(message: "指数部分需要数字", line: startLine, column: startColumn)
+                throw SyntaxError(message: L10n.t("指数部分需要数字"), line: startLine, column: startColumn)
             }
             while index < bytes.count, isDigit(bytes[index]) { advance() }
         }
 
         // 数字后面紧跟字母或小数点（`1a`、`1e5.5`）当场报错，不留到「值之后」才报
         if index < bytes.count, isLetter(bytes[index]) || bytes[index] == JSONMark.dot {
-            throw SyntaxError(message: "数字后面不能紧跟\(quote(bytes[index]))",
+            throw SyntaxError(message: L10n.format("数字后面不能紧跟%@", quote(bytes[index])),
                               line: startLine, column: startColumn)
         }
         return bytes[start..<index]
@@ -356,15 +356,15 @@ private struct JSONRewriter {
                                      expect: inout Expect,
                                      afterComma: Bool) throws {
         guard let frame = frames.last else {
-            throw SyntaxError(message: "意外出现\(quote(byte))，前面没有可闭合的容器")
+            throw SyntaxError(message: L10n.format("意外出现%@，前面没有可闭合的容器", quote(byte)))
         }
         guard byte == (frame.isObject ? JSONMark.closeBrace : JSONMark.closeBracket) else {
-            let kind = frame.isObject ? "对象" : "数组"
+            let kind = frame.isObject ? L10n.t("对象") : L10n.t("数组")
             let closer = frame.isObject ? "}" : "]"
-            throw SyntaxError(message: "这里是\(kind)，需要用 \(closer) 收尾，实际是\(quote(byte))")
+            throw SyntaxError(message: L10n.format("这里是%@，需要用 %@ 收尾，实际是%@", kind, closer, quote(byte)))
         }
         guard !afterComma else {
-            throw SyntaxError(message: "末尾多了一个逗号，JSON 不允许尾随逗号")
+            throw SyntaxError(message: L10n.t("末尾多了一个逗号，JSON 不允许尾随逗号"))
         }
         frames.removeLast()
         // 非空容器先换行缩回父层；空容器（`{}` / `[]`）就地收尾
@@ -421,9 +421,9 @@ private struct JSONRewriter {
     /// 把出错处的字符描述成可读文本：换行 / 控制字符给名称，其余给字符本身
     private func describe(_ byte: UInt8) -> String {
         switch byte {
-        case JSONMark.newline: return "换行"
-        case JSONMark.carriageReturn: return "回车"
-        case 0x00...0x1F, 0x7F: return "控制字符"
+        case JSONMark.newline: return L10n.t("换行")
+        case JSONMark.carriageReturn: return L10n.t("回车")
+        case 0x00...0x1F, 0x7F: return L10n.t("控制字符")
         case 0x20...0x7E: return String(UnicodeScalar(byte))
         default:
             // 多字节字符：从当前字节起取足够长度解码，只留第一个字符

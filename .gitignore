@@ -4,3 +4,4 @@ build/
 .swiftpm/
 xcuserdata/
 .idea/
+dsh-desktop-next-diagnostics-*.json

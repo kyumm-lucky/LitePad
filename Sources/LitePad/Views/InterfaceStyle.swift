@@ -151,7 +151,7 @@ struct LitePadToggle: View {
         .onHover { hover.isHovered = $0 }
         .help(help)
         .accessibilityLabel(title)
-        .accessibilityValue(isOn ? "已开启" : "已关闭")
+        .accessibilityValue(isOn ? L10n.t("已开启") : L10n.t("已关闭"))
     }
 }
 

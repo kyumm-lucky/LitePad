@@ -8,6 +8,8 @@ struct CodeTextView: NSViewRepresentable {
     @ObservedObject var tab: EditorTab
     /// 文件投放要交给会话的统一打开入口；拖动回调是单向的，不需要观察它
     let session: EditorSession
+    /// 参考栏用：只读浏览，不接收编辑
+    var isReadOnly = false
     /// 观察全局设置：设置变化驱动 updateNSView 重应用外观
     @ObservedObject private var settings = AppSettings.shared
 
@@ -18,7 +20,10 @@ struct CodeTextView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         // 自建 TextKit 1 栈：装饰（不可见元素 / 缩进指示 / 页面指示 / 当前行）在排版管理器里绘制
         let storage = NSTextStorage()
+        // 文本存储回调用于平移书签：书签存的是字符偏移，编辑后必须跟着正文移动
+        storage.delegate = context.coordinator
         let layoutManager = DecorationsLayoutManager()
+        layoutManager.delegate = context.coordinator
         storage.addLayoutManager(layoutManager)
         // 非零初始 frame：SwiftUI 稍后才给 scrollView 实际尺寸，
         // 零尺寸 frame 会让 [.width] 自适应算出多余宽度，导致文字被行号栏遮住
@@ -28,6 +33,7 @@ struct CodeTextView: NSViewRepresentable {
                                     textContainer: container)
         context.coordinator.storage = storage
         textView.isRichText = false
+        textView.isEditable = !isReadOnly
         textView.allowsUndo = true
         textView.usesFontPanel = false
         textView.importsGraphics = false
@@ -62,20 +68,39 @@ struct CodeTextView: NSViewRepresentable {
         scrollView.backgroundColor = .textBackgroundColor
 
         let ruler = LineNumberRulerView(textView: textView)
+        // 行号栏从标签读书签：书签随标签存活，视图重建后仍然画得出来
+        ruler.bookmarkOffsets = { [weak tab] in tab?.bookmarks ?? [] }
+        // 折叠块在行号栏右侧画一个小三角，提示这一行下面藏着内容
+        ruler.foldedOwnerLines = { [weak tab] in tab?.foldedOwnerLines ?? [] }
         scrollView.verticalRulerView = ruler
         scrollView.rulersVisible = true
 
-        // 滚动 / 窗口尺寸变化时刷新行号栏
+        // 滚动 / 窗口尺寸变化时刷新行号栏，并顺手记住滚动偏移供切回标签时恢复
         context.coordinator.boundsObserver = NotificationCenter.default.addObserver(
             forName: NSView.boundsDidChangeNotification,
             object: scrollView.contentView,
             queue: .main
-        ) { [weak ruler] _ in
+        ) { [weak ruler, weak tab, weak scrollView] _ in
             ruler?.needsDisplay = true
+            if let scrollView {
+                tab?.lastScrollOrigin = scrollView.contentView.bounds.origin
+            }
         }
 
         textView.delegate = context.coordinator
         context.coordinator.textView = textView
+        if isReadOnly {
+            // 参考栏是只读展示；点进来就把这一栏提升为主编辑区，原主栏降为参考栏
+            textView.onFocus = { [weak session] in
+                session?.promoteReferencePaneToPrimary()
+            }
+        } else if session.consumeEditorFocusRequest() {
+            // 换栏后主栏视图是重建的：等窗口装好再要焦点，用户点进来就能直接输入
+            DispatchQueue.main.async { [weak textView] in
+                guard let textView, let window = textView.window else { return }
+                window.makeFirstResponder(textView)
+            }
+        }
 
         tab.bridge = EditorBridge(
             goToLine: { [weak textView] line in
@@ -120,6 +145,33 @@ struct CodeTextView: NSViewRepresentable {
             reloadText: { [weak coordinator = context.coordinator] newText in
                 guard let coordinator else { return false }
                 return coordinator.reloadWholeText(newText)
+            },
+            moveLine: { [weak textView] direction in
+                guard let textView else { return }
+                moveCurrentLine(direction, in: textView)
+            },
+            duplicateLine: { [weak textView] in
+                guard let textView else { return }
+                duplicateCurrentLine(in: textView)
+            },
+            insertTimestamp: { [weak textView] in
+                guard let textView else { return }
+                insertTimestamp(in: textView)
+            },
+            toggleBookmark: { [weak coordinator = context.coordinator] in
+                guard let coordinator, let textView = coordinator.textView else { return }
+                toggleBookmark(in: textView, tab: coordinator.tab)
+            },
+            stepBookmark: { [weak coordinator = context.coordinator] direction in
+                guard let coordinator, let textView = coordinator.textView else { return }
+                stepBookmark(direction, in: textView, tab: coordinator.tab)
+            },
+            toggleFold: { [weak coordinator = context.coordinator] in
+                guard let coordinator, let textView = coordinator.textView else { return }
+                coordinator.tab.toggleFold(at: textView.selectedRange().location)
+            },
+            unfoldAll: { [weak coordinator = context.coordinator] in
+                coordinator?.tab.clearFolds()
             }
         )
 
@@ -148,11 +200,31 @@ struct CodeTextView: NSViewRepresentable {
         }
 
         textView.string = tab.text
-        SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+        if !tab.isLargeDocument {
+            SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+        }
         context.coordinator.highlightedLanguage = tab.language
+        restoreEditingState(tab: tab, textView: textView, scrollView: scrollView)
         context.coordinator.publishStats(from: textView)
         context.coordinator.applyAppearanceIfNeeded(textView: textView)
         return scrollView
+    }
+
+    /// 切回标签时恢复上次的选区与滚动位置。滚动必须等 SwiftUI 完成首帧布局再施加，
+    /// 否则文本容器还没有最终高度，偏移会被夹回顶部；空文档没有可恢复的位置
+    private func restoreEditingState(tab: EditorTab, textView: NSTextView, scrollView: NSScrollView) {
+        let length = (tab.text as NSString).length
+        if let saved = tab.lastSelection {
+            let location = min(max(saved.location, 0), length)
+            let range = NSRange(location: location, length: min(saved.length, length - location))
+            textView.setSelectedRange(range)
+        }
+        guard let origin = tab.lastScrollOrigin else { return }
+        DispatchQueue.main.async { [weak scrollView] in
+            guard let scrollView else { return }
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
     }
 
     /// 视图被拆除（切换标签、窗口关闭）后整份清掉回调包：拆除后的视图没有撤销栈可走，
@@ -169,13 +241,21 @@ struct CodeTextView: NSViewRepresentable {
         // 输入法组字期间（拼音预输入）视图里是 marked text，与模型必然不一致；
         // 此时回写 string / 选区会立刻中止组字，导致中文无法输入，必须整段跳过
         guard !textView.hasMarkedText() else { return }
+        if textView.isEditable == isReadOnly {
+            textView.isEditable = !isReadOnly
+        }
         context.coordinator.applyAppearanceIfNeeded(textView: textView)
+        if context.coordinator.appliedFolds != tab.foldedRanges {
+            context.coordinator.appliedFolds = tab.foldedRanges
+            invalidateFolds(in: textView)
+        }
         let languageChanged = context.coordinator.highlightedLanguage != tab.language
 
         if textView.string != tab.text {
             // 整串赋值清不掉撤销管理器里已登记的动作，之后再按撤销会在失效区间上抛异常并终止进程（KTD14）；
             // 这条赋值是外部改动重载与模型侧改写的落点，赋值前先清空撤销栈是唯一可行的口径
             textView.undoManager?.removeAllActions()
+            (textView as? LiteTextView)?.clearExtraCursors()
             let selection = textView.selectedRanges.compactMap { $0 as? NSRange }
             textView.string = tab.text
             // 这条赋值不触发 textDidChange，正文修订号要在这里手动推一格
@@ -187,13 +267,17 @@ struct CodeTextView: NSViewRepresentable {
             }
             textView.selectedRanges = clamped.map { NSValue(range: $0) }
             context.coordinator.highlightedLanguage = tab.language
-            SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+            if !tab.isLargeDocument {
+                SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+            }
             textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
             // 整串重写会清空 layoutManager 临时属性，重置高亮快照让下方按新状态重建
             context.coordinator.appliedHighlight = HighlightSnapshot()
         } else if languageChanged {
             context.coordinator.highlightedLanguage = tab.language
-            SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+            if !tab.isLargeDocument {
+                SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+            }
         }
 
         // 高亮（查找匹配 + 选中词出现）有变化时重建；选区/滚动只由查找定位回调驱动，
@@ -201,7 +285,8 @@ struct CodeTextView: NSViewRepresentable {
         context.coordinator.applyHighlightsIfNeeded(textView: textView)
     }
 
-    final class Coordinator: NSObject, NSTextViewDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate,
+                              NSLayoutManagerDelegate {
         let tab: EditorTab
         /// 自建 TextKit 栈的存储，强持有防止被释放
         var storage: NSTextStorage?
@@ -210,6 +295,8 @@ struct CodeTextView: NSViewRepresentable {
         var boundsObserver: NSObjectProtocol?
         /// 已应用过的高亮快照（查找匹配 + 选中词出现），避免无变化时重复全文清设
         fileprivate var appliedHighlight = HighlightSnapshot()
+        /// 已应用到排版管线的折叠区间：与标签当前值不同时整篇重建字形
+        fileprivate var appliedFolds: [NSRange] = []
         /// 视图正文的修订号：正文一变就自增（输入、整串替换、整串赋值三条路都算），
         /// 供选中词扫描判定结果还能不能复用。不设 private：整串赋值那条路在外层视图的
         /// updateNSView 里补推（与 appliedHighlight 同一个可见范围）
@@ -328,9 +415,11 @@ struct CodeTextView: NSViewRepresentable {
             }
 
             // 主题取色是解析后的具体色值，写进文本存储后不会自己变：每次应用外观都按配置里的主题重跑一次高亮（KTD6）
-            SyntaxHighlighter.highlight(textView: textView, language: tab.language,
-                                        palette: EditorPalette.resolve(config.syntaxTheme,
-                                                                       for: textView.effectiveAppearance))
+            if !tab.isLargeDocument {
+                SyntaxHighlighter.highlight(textView: textView, language: tab.language,
+                                            palette: EditorPalette.resolve(config.syntaxTheme,
+                                                                           for: textView.effectiveAppearance))
+            }
             // 行号栏的用色同样按主题与外观解析，换主题或换外观都要重画
             scrollView?.verticalRulerView?.needsDisplay = true
 
@@ -339,8 +428,48 @@ struct CodeTextView: NSViewRepresentable {
             textView.needsDisplay = true
         }
 
-        func textDidChange(_ notification: Notification) {
-            guard let textView else { return }
+        /// 正文编辑后平移书签；书签位置变了要重画行号栏
+        func textStorage(_ textStorage: NSTextStorage,
+                         didProcessEditing editedMask: NSTextStorageEditActions,
+                         range editedRange: NSRange,
+                         changeInLength delta: Int) {
+            guard editedMask.contains(.editedCharacters) else { return }
+            tab.adjustBookmarks(forEditedRange: editedRange, changeInLength: delta)
+            tab.adjustFolds(forEditedRange: editedRange, changeInLength: delta,
+                            newText: textStorage.string)
+            if let ruler = textView?.enclosingScrollView?.verticalRulerView as? LineNumberRulerView {
+                ruler.invalidateLineStarts()
+            }
+            textView?.enclosingScrollView?.verticalRulerView?.needsDisplay = true
+        }
+
+        /// 折叠：把落在折叠区间里的字形属性标为 null，排版直接跳过这些行。
+        /// 正文存储不动，所以保存、撤销与查找看到的仍是完整文本
+        func layoutManager(_ layoutManager: NSLayoutManager,
+                           shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
+                           properties props: UnsafePointer<NSLayoutManager.GlyphProperty>,
+                           characterIndexes charIndexes: UnsafePointer<Int>,
+                           font aFont: NSFont,
+                           forGlyphRange glyphRange: NSRange) -> Int {
+            let folds = tab.foldedRanges
+            guard !folds.isEmpty else { return 0 }
+            let count = glyphRange.length
+            guard count > 0 else { return 0 }
+            let properties = UnsafeMutablePointer<NSLayoutManager.GlyphProperty>
+                .allocate(capacity: count)
+            defer { properties.deallocate() }
+            for index in 0..<count {
+                let characterIndex = charIndexes[index]
+                let hidden = folds.contains { NSLocationInRange(characterIndex, $0) }
+                properties[index] = hidden ? .null : props[index]
+            }
+            layoutManager.setGlyphs(glyphs, properties: properties,
+                                    characterIndexes: charIndexes, font: aFont,
+                                    forGlyphRange: glyphRange)
+            return count
+        }
+
+        func textDidChange(_ notification: Notification) {            guard let textView else { return }
             // 视图正文变了，选中词扫描的缓存就此作废（组字期间也算：扫描读的是视图正文）
             textRevision += 1
             // 组字（marked text）阶段的内容不写入模型、不重刷高亮，
@@ -348,10 +477,16 @@ struct CodeTextView: NSViewRepresentable {
             if !textView.hasMarkedText() {
                 tab.text = textView.string
                 highlightedLanguage = tab.language
-                SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+                if !tab.isLargeDocument {
+                    SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+                }
                 textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
                 if let decorations = textView.layoutManager as? DecorationsLayoutManager {
                     decorations.updateCurrentLine(for: textView)
+                }
+                // 外部改写（撤销、重载、模型侧清理）后额外光标的位置不再对应正文，直接收起
+                if let lite = textView as? LiteTextView, !lite.isPerformingMultiCursorEdit {
+                    lite.clearExtraCursors()
                 }
                 tab.refreshMatches()
             }
@@ -360,6 +495,8 @@ struct CodeTextView: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            // 记住选区：切走再切回时由 makeNSView 恢复（撤销/滚动同理，见 dismantleNSView 的说明）
+            tab.lastSelection = textView.selectedRange()
             publishStats(from: textView)
             if let decorations = textView.layoutManager as? DecorationsLayoutManager {
                 decorations.updateCurrentLine(for: textView)
@@ -411,7 +548,9 @@ struct CodeTextView: NSViewRepresentable {
             let appearance = textView.effectiveAppearance.name
             guard appearance != appliedAppearanceName else { return }
             appliedAppearanceName = appearance
-            SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+            if !tab.isLargeDocument {
+                SyntaxHighlighter.highlight(textView: textView, language: tab.language)
+            }
             rebuildHighlights(textView: textView)
             textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
             textView.needsDisplay = true
@@ -425,7 +564,10 @@ struct CodeTextView: NSViewRepresentable {
         private func currentHighlightSnapshot(textView: NSTextView) -> HighlightSnapshot {
             let selection = textView.selectedRange()
             let word: SelectedWordHighlight?
-            if let last = lastWordScan, last.revision == textRevision, last.selection == selection {
+            if tab.isLargeDocument {
+                // 大文档不做选中词全文扫描：一次全量取值就够逐键卡顿，高亮不等于可用性
+                word = nil
+            } else if let last = lastWordScan, last.revision == textRevision, last.selection == selection {
                 word = last.highlight
             } else {
                 word = selectedWordHighlight(for: textView)
@@ -608,7 +750,7 @@ private func performSaveCleanup(textView: NSTextView, tab: EditorTab) -> SaveCle
     // 组字期间视图含未上屏的 marked text：就地改写会把它一并提交、模型与匹配区间也会错位；
     // 拒绝这次清理，由会话中止本次保存并报错（不默默跳过设置项）
     guard !textView.hasMarkedText() else {
-        return .rejected(reason: "编辑器正在输入法组字，请先结束组字再保存。")
+        return .rejected(reason: L10n.t("编辑器正在输入法组字，请先结束组字再保存。"))
     }
 
     let current = textView.string
@@ -622,7 +764,7 @@ private func performSaveCleanup(textView: NSTextView, tab: EditorTab) -> SaveCle
     // 整篇替换是一条撤销记录；replaceRange 内的 didChangeText 会把新文本同步回模型
     guard replaceRange(NSRange(location: 0, length: (current as NSString).length),
                        with: cleaned, textView: textView) else {
-        return .rejected(reason: "编辑器的撤销协议拒绝了这次正文清理。")
+        return .rejected(reason: L10n.t("编辑器的撤销协议拒绝了这次正文清理。"))
     }
     // 清理只删行尾空白或在末尾追加换行，选区按原位置收拢即可，不必跳到哪里
     let length = (cleaned as NSString).length
@@ -686,4 +828,175 @@ private func applyHighlights(textView: NSTextView, old: HighlightSnapshot, new: 
             [.backgroundColor: index == state.current ? active : dimmed],
             forCharacterRange: range)
     }
+}
+
+// MARK: - 行编辑（上移 / 下移 / 复制行 / 插入日期时间）
+
+/// 文档实际使用的换行风格：只用于拆分/拼接时插入分隔，不统一整篇行尾
+private func documentLineBreak(of text: String) -> String {
+    if text.contains("\r\n") { return "\r\n" }
+    if text.contains("\r") { return "\r" }
+    return "\n"
+}
+
+/// 去掉行尾的一个换行（CRLF 先判，避免把 CRLF 拆成 CR + LF）
+private func trimmingTrailingLineBreak(_ line: String) -> String {
+    if line.hasSuffix("\r\n") { return String(line.dropLast(2)) }
+    if line.hasSuffix("\n") || line.hasSuffix("\r") { return String(line.dropLast()) }
+    return line
+}
+
+/// 行编辑的统一落点：走 shouldChangeText 撤销协议，替换后把光标放到新行对应列，
+/// 一次编辑是一条撤销记录
+private func applyLineEdit(range: NSRange, replacement: String, caret: Int, in textView: NSTextView) {
+    guard let storage = textView.textStorage,
+          range.location != NSNotFound,
+          NSMaxRange(range) <= storage.length,
+          textView.shouldChangeText(in: range, replacementString: replacement) else {
+        NSSound.beep()
+        return
+    }
+    textView.breakUndoCoalescing()
+    storage.replaceCharacters(in: range, with: replacement)
+    textView.didChangeText()
+    let clamped = min(max(caret, 0), storage.length)
+    textView.setSelectedRange(NSRange(location: clamped, length: 0))
+    textView.scrollRangeToVisible(textView.selectedRange())
+}
+
+/// 当前行上移（direction < 0）或下移（direction > 0）：交换相邻两行并保持列位置。
+/// 末行没有结尾换行时按文档既有换行风格补分隔，结果不引入混合行尾
+private func moveCurrentLine(_ direction: Int, in textView: NSTextView) {
+    guard direction == -1 || direction == 1 else { return }
+    let text = textView.string
+    let nsText = text as NSString
+    guard nsText.length > 0 else { return }
+    let caret = min(max(textView.selectedRange().location, 0), nsText.length)
+    let current = nsText.lineRange(for: NSRange(location: min(caret, nsText.length - 1), length: 0))
+    let currentLine = nsText.substring(with: current)
+    let column = caret - current.location
+    let separator = documentLineBreak(of: text)
+
+    if direction < 0 {
+        guard current.location > 0 else {
+            NSSound.beep()
+            return
+        }
+        let previous = nsText.lineRange(for: NSRange(location: current.location - 1, length: 0))
+        let previousLine = nsText.substring(with: previous)
+        let combined = NSRange(location: previous.location,
+                               length: NSMaxRange(current) - previous.location)
+        let replacement: String
+        if currentLine.hasSuffix("\n") || currentLine.hasSuffix("\r") {
+            replacement = currentLine + previousLine
+        } else {
+            replacement = currentLine + separator + trimmingTrailingLineBreak(previousLine)
+        }
+        applyLineEdit(range: combined, replacement: replacement,
+                      caret: previous.location + column, in: textView)
+    } else {
+        guard NSMaxRange(current) < nsText.length else {
+            NSSound.beep()
+            return
+        }
+        let next = nsText.lineRange(for: NSRange(location: NSMaxRange(current), length: 0))
+        let nextLine = nsText.substring(with: next)
+        let combined = NSRange(location: current.location,
+                               length: NSMaxRange(next) - current.location)
+        let replacement: String
+        let newLineStart: Int
+        if nextLine.hasSuffix("\n") || nextLine.hasSuffix("\r") {
+            replacement = nextLine + currentLine
+            newLineStart = current.location + (nextLine as NSString).length
+        } else {
+            replacement = nextLine + separator + trimmingTrailingLineBreak(currentLine)
+            newLineStart = current.location + (nextLine as NSString).length
+                + (separator as NSString).length
+        }
+        applyLineEdit(range: combined, replacement: replacement,
+                      caret: newLineStart + column, in: textView)
+    }
+}
+
+/// 复制当前行：插到本行之后，光标移到副本的同一列
+private func duplicateCurrentLine(in textView: NSTextView) {
+    let text = textView.string
+    let nsText = text as NSString
+    guard nsText.length > 0 else { return }
+    let caret = min(max(textView.selectedRange().location, 0), nsText.length)
+    let current = nsText.lineRange(for: NSRange(location: min(caret, nsText.length - 1), length: 0))
+    let currentLine = nsText.substring(with: current)
+    let column = caret - current.location
+    let separator = documentLineBreak(of: text)
+    if currentLine.hasSuffix("\n") || currentLine.hasSuffix("\r") {
+        applyLineEdit(range: NSRange(location: NSMaxRange(current), length: 0),
+                      replacement: currentLine,
+                      caret: caret + (currentLine as NSString).length, in: textView)
+    } else {
+        let insertion = separator + currentLine
+        applyLineEdit(range: NSRange(location: nsText.length, length: 0),
+                      replacement: insertion,
+                      caret: nsText.length + (separator as NSString).length + column,
+                      in: textView)
+    }
+}
+
+/// 在光标处插入本地日期时间；有选区时替换选区，与普通粘贴一致
+private func insertTimestamp(in textView: NSTextView) {
+    let stamp = timestampFormatter.string(from: Date())
+    let range = textView.selectedRange()
+    applyLineEdit(range: range, replacement: stamp,
+                  caret: range.location + (stamp as NSString).length, in: textView)
+}
+
+private let timestampFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+    return formatter
+}()
+
+// MARK: - 书签
+
+/// 切换当前行的书签：书签记行首偏移，编辑后由文本存储回调整体平移
+private func toggleBookmark(in textView: NSTextView, tab: EditorTab) {
+    let nsText = textView.string as NSString
+    guard nsText.length > 0 else { return }
+    let caret = min(max(textView.selectedRange().location, 0), nsText.length)
+    let line = nsText.lineRange(for: NSRange(location: min(caret, nsText.length - 1), length: 0))
+    tab.toggleBookmark(at: line.location)
+    textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
+}
+
+/// 跳到下一个 / 上一个书签，到头后循环；书签行首即目标位置
+private func stepBookmark(_ direction: Int, in textView: NSTextView, tab: EditorTab) {
+    let offsets = tab.bookmarks.sorted()
+    guard !offsets.isEmpty else {
+        NSSound.beep()
+        return
+    }
+    let caret = textView.selectedRange().location
+    let target: Int
+    if direction > 0 {
+        target = offsets.first(where: { $0 > caret }) ?? offsets[0]
+    } else {
+        target = offsets.last(where: { $0 < caret }) ?? offsets[offsets.count - 1]
+    }
+    let length = (textView.string as NSString).length
+    textView.setSelectedRange(NSRange(location: min(target, length), length: 0))
+    textView.scrollRangeToVisible(textView.selectedRange())
+    textView.window?.makeFirstResponder(textView)
+}
+
+/// 折叠区间变化后强制重算字形与排版：隐藏靠字形属性完成，不失效会沿用旧字形
+private func invalidateFolds(in textView: NSTextView) {
+    guard let layoutManager = textView.layoutManager,
+          let container = textView.textContainer else { return }
+    let full = NSRange(location: 0, length: (textView.string as NSString).length)
+    layoutManager.invalidateGlyphs(forCharacterRange: full, changeInLength: 0,
+                                   actualCharacterRange: nil)
+    layoutManager.invalidateLayout(forCharacterRange: full, actualCharacterRange: nil)
+    layoutManager.ensureLayout(for: container)
+    textView.needsDisplay = true
+    textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
 }

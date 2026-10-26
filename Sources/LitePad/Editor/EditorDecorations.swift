@@ -272,6 +272,18 @@ final class LiteTextView: NSTextView {
     var indentContextProvider: (() -> EditorIndentContext)?
     /// 系统深浅切换（或外观模式切换）后的通知：高亮与装饰的取色都按外观解析，外观变了要按新外观重取（KTD6）
     var onAppearanceChanged: (() -> Void)?
+    /// 多光标：除主光标（selectedRange）外的额外插入点（字符偏移，升序）
+    var extraCursors: [Int] = []
+    /// 批量编辑进行中：此时正文变化由多光标自己发起，不清掉光标组
+    var isPerformingMultiCursorEdit = false
+    /// 成为第一响应者时的回调（参考栏据此把自己提升为主编辑区）
+    var onFocus: (() -> Void)?
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { onFocus?() }
+        return accepted
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -327,6 +339,8 @@ final class LiteTextView: NSTextView {
     /// 换行与缩进合成一次插入、经 shouldChangeText 撤销协议登记（KTD14），一次撤销即可整体回退；
     /// 插入前断开输入合并，否则这一下回车会被并进上一段输入，撤销时连前面的字符一起回退
     override func insertNewline(_ sender: Any?) {
+        // 回车带缩进上下文，多光标下不做批量处理：先收起额外光标，按主光标插入
+        clearExtraCursors()
         guard !hasMarkedText(), let context = indentContextProvider?() else {
             super.insertNewline(sender)
             return
@@ -345,6 +359,7 @@ final class LiteTextView: NSTextView {
     /// Tab（R14）：开启插入空格时按缩进宽度插入空格，否则插入一个制表符；
     /// 制表符的显示宽度由外观应用按同一缩进宽度设置的制表位保证，与缩进指示线对齐（KTD10）
     override func insertTab(_ sender: Any?) {
+        clearExtraCursors()
         guard !hasMarkedText() else {
             super.insertTab(sender)
             return

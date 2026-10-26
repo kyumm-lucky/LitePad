@@ -18,15 +18,15 @@ enum LineOperationKind: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .sortAscending: return "升序排序"
-        case .sortDescending: return "降序排序"
-        case .deduplicate: return "去重"
-        case .trimTrailingWhitespace: return "删除行尾空白"
-        case .joinLines: return "合并行"
-        case .uppercase: return "转为大写"
-        case .lowercase: return "转为小写"
-        case .comment: return "添加行注释"
-        case .uncomment: return "取消行注释"
+        case .sortAscending: return L10n.t("升序排序")
+        case .sortDescending: return L10n.t("降序排序")
+        case .deduplicate: return L10n.t("去重")
+        case .trimTrailingWhitespace: return L10n.t("删除行尾空白")
+        case .joinLines: return L10n.t("合并行")
+        case .uppercase: return L10n.t("转为大写")
+        case .lowercase: return L10n.t("转为小写")
+        case .comment: return L10n.t("添加行注释")
+        case .uncomment: return L10n.t("取消行注释")
         }
     }
 
@@ -106,7 +106,7 @@ enum LineOperations {
     }
 
     /// 没有行注释符号的语言（纯文本、HTML、XML、JSON）上注释类操作的原因
-    static let commentUnavailable = "当前语法没有行注释符号"
+    static let commentUnavailable = L10n.t("当前语法没有行注释符号")
 
     // MARK: - 拆行与拼回
 

@@ -13,7 +13,7 @@ struct SaveCleanupExclusionList: View {
                 Image(systemName: "checkmark.square")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(InterfaceStyle.accent)
-                Text("不清理这些语法")
+                Text(L10n.t("不清理这些语法"))
                     .font(.system(size: 11, weight: .semibold))
                 Spacer(minLength: 0)
                 Text("\(settings.saveCleanupExcludedLanguageIDs.count)/\(languages.count)")
@@ -45,7 +45,7 @@ struct SaveCleanupExclusionList: View {
                         // 勾选状态只由一个图标符号的两种画法表达，VoiceOver 读不出来：
                         // 按工程既有口径补上名称、状态与选中特征（与 LitePadToggle、LiquidSegmented 一致）
                         .accessibilityLabel("\(language.displayName) \(language.extensions.joined(separator: " / "))")
-                        .accessibilityValue(excluded ? "已排除" : "未排除")
+                        .accessibilityValue(excluded ? L10n.t("已排除") : L10n.t("未排除"))
                         .accessibilityAddTraits(excluded ? [.isButton, .isSelected] : .isButton)
                     }
                 }

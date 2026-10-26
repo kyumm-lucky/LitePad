@@ -12,9 +12,9 @@ enum SyntaxTheme: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .system: return "跟随系统"
-        case .classic: return "经典"
-        case .highContrast: return "高对比"
+        case .system: return L10n.t("跟随系统")
+        case .classic: return L10n.t("经典")
+        case .highContrast: return L10n.t("高对比")
         }
     }
 }
@@ -198,6 +198,29 @@ enum SyntaxHighlighter {
                   pattern: "<![^>]*",
                   options: [.caseInsensitive], color: palette.tag, base: palette.base)
         }
+        if language.id == "markdown" {
+            applyMarkdown(to: storage, source: source, palette: palette)
+        }
+    }
+
+    /// Markdown：标题 / 围栏代码 / 行内代码 / 引用 / 粗体 / 链接。
+    /// 规则顺序即优先级：围栏代码先着色，内部内容不会再被后面的行内规则覆盖
+    private static func applyMarkdown(to storage: NSTextStorage, source: String,
+                                      palette: EditorPalette) {
+        apply(to: storage, source: source, pattern: "```[\\s\\S]*?```",
+              options: [], color: palette.string, base: palette.base)
+        apply(to: storage, source: source, pattern: "~~~[\\s\\S]*?~~~",
+              options: [], color: palette.string, base: palette.base)
+        apply(to: storage, source: source, pattern: "`[^`\\n]+`",
+              options: [], color: palette.string, base: palette.base)
+        apply(to: storage, source: source, pattern: "(?m)^#{1,6}[^\\n]*",
+              options: [], color: palette.keyword, base: palette.base)
+        apply(to: storage, source: source, pattern: "(?m)^>.*$",
+              options: [], color: palette.comment, base: palette.base)
+        apply(to: storage, source: source, pattern: "\\*\\*[^*\\n]+\\*\\*",
+              options: [], color: palette.number, base: palette.base)
+        apply(to: storage, source: source, pattern: "\\[[^\\]\\n]*\\]\\([^)\\n]*\\)",
+              options: [], color: palette.tag, base: palette.base)
     }
 
     // MARK: - Private

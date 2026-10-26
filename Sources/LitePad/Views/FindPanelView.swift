@@ -11,38 +11,38 @@ struct FindPanelView: View {
             HStack(spacing: 6) {
                 // 转义说明放在下方提示行（那儿有完整 tooltip）；输入框本身不加 help——
                 // AppKit 会把 help 当可访问性标签，顶掉输入框自己的「查找」名字
-                TextField("查找", text: queryBinding)
+                TextField(L10n.t("查找"), text: queryBinding)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
                     .frame(width: 150)
                     .focused($queryFocused)
                     .onSubmit { tab.navigateMatch(1) }
-                panelButton("chevron.up", "上一个匹配") { tab.navigateMatch(-1) }
-                panelButton("chevron.down", "下一个匹配") { tab.navigateMatch(1) }
+                panelButton("chevron.up", L10n.t("上一个匹配")) { tab.navigateMatch(-1) }
+                panelButton("chevron.down", L10n.t("下一个匹配")) { tab.navigateMatch(1) }
                 Text(countText)
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(tab.findState?.regexError == true ? Color.red : Color.secondary)
-                    .help(tab.findState?.regexError == true ? "正则表达式无效" : "")
+                    .help(tab.findState?.regexError == true ? L10n.t("正则表达式无效") : "")
                 Spacer(minLength: 0)
-                panelButton("xmark", "关闭（Esc）") { tab.findState = nil }
+                panelButton("xmark", L10n.t("关闭（Esc）")) { tab.closeFindPanel() }
             }
             HStack(spacing: 6) {
-                TextField("替换为", text: replacementBinding)
+                TextField(L10n.t("替换为"), text: replacementBinding)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
                     .frame(width: 150)
                     // 与查找框同口径：回车继续跳到下一个匹配，不用先点回查找框
                     .onSubmit { tab.navigateMatch(1) }
-                panelButton("arrow.uturn.backward", "替换当前匹配") { tab.bridge.replace?(false) }
-                panelButton("arrow.2.squarepath", "全部替换") { tab.bridge.replace?(true) }
+                panelButton("arrow.uturn.backward", L10n.t("替换当前匹配")) { tab.bridge.replace?(false) }
+                panelButton("arrow.2.squarepath", L10n.t("全部替换")) { tab.bridge.replace?(true) }
             }
             HStack(spacing: 12) {
-                LitePadToggle(title: "正则", isOn: optionBinding(\.useRegex))
-                LitePadToggle(title: "大小写", isOn: optionBinding(\.caseSensitive))
-                LitePadToggle(title: "全词", isOn: optionBinding(\.wholeWord))
+                LitePadToggle(title: L10n.t("正则"), isOn: optionBinding(\.useRegex))
+                LitePadToggle(title: L10n.t("大小写"), isOn: optionBinding(\.caseSensitive))
+                LitePadToggle(title: L10n.t("全词"), isOn: optionBinding(\.wholeWord))
                 Spacer(minLength: 0)
                 // 单行输入框输不进真实换行，转义是这里唯一的表达方式，直接写在面板上而不是只藏在悬停提示里
-                Text("\\n 换行 · \\t 制表符")
+                Text(L10n.t("\\n 换行 · \\t 制表符"))
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .help(escapesHelp)
@@ -54,7 +54,7 @@ struct FindPanelView: View {
         .shadow(color: .black.opacity(0.2), radius: 14, y: 5)
         // 整块参与命中测试：行距、内边距等空白处不再漏到下方编辑器（点击与光标都留在面板上）
         .contentShape(Rectangle())
-        .onExitCommand { tab.findState = nil }
+        .onExitCommand { tab.closeFindPanel() }
         .onAppear {
             // 面板带滑入过渡，出现当帧就设焦点会被过渡吞掉：SwiftUI 侧焦点状态已置真、
             // AppKit 侧第一响应者却还在编辑器上，于是输入与回车都落进编辑器（回车不换搜索结果）。
@@ -65,7 +65,7 @@ struct FindPanelView: View {
 
     private var countText: String {
         guard let state = tab.findState, !state.query.isEmpty else { return "" }
-        if state.regexError { return "正则无效" }
+        if state.regexError { return L10n.t("正则无效") }
         if state.matches.isEmpty { return "0/0" }
         return "\(state.current + 1)/\(state.matches.count)"
     }
@@ -96,7 +96,7 @@ struct FindPanelView: View {
 
     /// 两个输入框共用的转义说明：面板是单行输入框，换行只能这样输
     private var escapesHelp: String {
-        "转义：\\n 换行（LF / CRLF 文档都匹配）· \\r 回车 · \\t 制表符 · \\\\ 反斜杠"
+        L10n.t("转义：\\n 换行（LF / CRLF 文档都匹配）· \\r 回车 · \\t 制表符 · \\\\ 反斜杠")
     }
 
     private func optionBinding(_ keyPath: WritableKeyPath<FindState, Bool>) -> Binding<Bool> {

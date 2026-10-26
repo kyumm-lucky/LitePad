@@ -55,6 +55,8 @@ struct ToolsDrawer: View {
                     DiffSection(tools: tools, tab: tab)
                 case .lines:
                     LineOperationsSection(tools: tools, tab: tab)
+                case .folderSearch:
+                    FolderSearchSection()
                 default:
                     ConverterSection(tools: tools, tab: tab)
                 }
@@ -88,12 +90,12 @@ struct ToolsDrawer: View {
                         .foregroundStyle(.primary)
                         .contentTransition(.opacity)
                         .animation(Motion.content, value: tools.kind)
-                    Text("文本工作台")
+                    Text(L10n.t("文本工作台"))
                         .font(.system(size: 9))
                         .foregroundStyle(InterfaceStyle.muted)
                 }
             }
-            .help("在标签栏右侧的扳手下拉中切换工具")
+            .help(L10n.t("在标签栏右侧的扳手下拉中切换工具"))
 
             Spacer(minLength: 0)
 
@@ -102,13 +104,13 @@ struct ToolsDrawer: View {
                 Button {
                     session.seedToolsFromEditor(tab: tab)
                 } label: {
-                    Label("取编辑器", systemImage: "arrow.down.doc")
+                    Label(L10n.t("取编辑器"), systemImage: "arrow.down.doc")
                 }
                 .buttonStyle(PanelActionButtonStyle(tone: .neutral))
-                .help("取编辑器当前选区（无选区时取全文）")
+                .help(L10n.t("取编辑器当前选区（无选区时取全文）"))
             }
 
-            PanelIconButton(symbol: "xmark", help: "关闭（Esc）") { session.closeTool() }
+            PanelIconButton(symbol: "xmark", help: L10n.t("关闭（Esc）")) { session.closeTool() }
         }
     }
 
@@ -153,7 +155,7 @@ private final class DrawerResizeNSView: NSView, CursorDeclaring {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("DrawerResizeNSView 只由代码创建")
+        fatalError(L10n.t("DrawerResizeNSView 只由代码创建"))
     }
 
     override func layout() {
@@ -257,11 +259,11 @@ private struct ConverterSection: View {
 
             // UUID 是凭空生成，没有输入区（取编辑器的文本对它没有意义）
             if tools.kind.requiresInput {
-                PanelSectionLabel(title: "输入", detail: inputDetail)
-                CodeTextEditor(text: inputBinding, placeholder: "在此输入或粘贴文本")
+                PanelSectionLabel(title: L10n.t("输入"), detail: inputDetail)
+                CodeTextEditor(text: inputBinding, placeholder: L10n.t("在此输入或粘贴文本"))
             }
 
-            PanelSectionLabel(title: "结果", detail: resultDetail,
+            PanelSectionLabel(title: L10n.t("结果"), detail: resultDetail,
                               isError: tools.errorMessage != nil)
             PanelResultText(text: tools.errorMessage ?? tools.output,
                             isError: tools.errorMessage != nil)
@@ -275,17 +277,17 @@ private struct ConverterSection: View {
                 Button {
                     session.writeBackToolsResult(tools.output, replaceSelection: true, tab: tab)
                 } label: {
-                    Label("替换选区", systemImage: "arrow.triangle.2.circlepath")
+                    Label(L10n.t("替换选区"), systemImage: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(PanelActionButtonStyle(tone: .neutral))
-                .help("替换编辑器当前选区；无选区时插入到光标处")
+                .help(L10n.t("替换编辑器当前选区；无选区时插入到光标处"))
                 Button {
                     session.writeBackToolsResult(tools.output, replaceSelection: false, tab: tab)
                 } label: {
-                    Label("替换全文", systemImage: "arrow.clockwise")
+                    Label(L10n.t("替换全文"), systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(PanelActionButtonStyle(tone: .accent))
-                .help("用结果替换编辑器全文（可 ⌘Z 回滚）")
+                .help(L10n.t("用结果替换编辑器全文（可 ⌘Z 回滚）"))
             }
             .controlSize(.small)
             // 三个按钮都作用于结果区，能不能用只看结果（KTD12）：不需要输入的工具不受输入为空影响
@@ -301,9 +303,9 @@ private struct ConverterSection: View {
         switch tools.kind {
         case .unicode:
             if tools.direction == .encode {
-                LitePadToggle(title: "转义 ASCII",
+                LitePadToggle(title: L10n.t("转义 ASCII"),
                               isOn: optionBinding(\.unicodeEscapesASCII),
-                              help: "连 ASCII 字符一起转义为 \\uXXXX")
+                              help: L10n.t("连 ASCII 字符一起转义为 \\uXXXX"))
                     .transition(.opacity)
             }
         case .ascii:
@@ -316,16 +318,16 @@ private struct ConverterSection: View {
                             segmentWidth: 58)
         case .url:
             if tools.direction == .encode {
-                LitePadToggle(title: "空格转 +",
+                LitePadToggle(title: L10n.t("空格转 +"),
                               isOn: optionBinding(\.urlSpaceAsPlus),
-                              help: "空格编码为 +（表单风格），默认编码为 %20")
+                              help: L10n.t("空格编码为 +（表单风格），默认编码为 %20"))
                     .transition(.opacity)
             }
         case .base64:
             if tools.direction == .encode {
-                LitePadToggle(title: "URL 安全",
+                LitePadToggle(title: L10n.t("URL 安全"),
                               isOn: optionBinding(\.base64URLSafe),
-                              help: "用 - _ 替代 + / 并去掉结尾 =；解码时两种写法都能识别")
+                              help: L10n.t("用 - _ 替代 + / 并去掉结尾 =；解码时两种写法都能识别"))
                     .transition(.opacity)
             }
         case .json:
@@ -347,20 +349,20 @@ private struct ConverterSection: View {
                                 tools.recompute()
                             },
                             segmentWidth: 58)
-            LitePadToggle(title: "大写",
+            LitePadToggle(title: L10n.t("大写"),
                           isOn: optionBinding(\.hashUppercase),
-                          help: "结果用大写十六进制；默认小写，与系统命令行工具一致")
+                          help: L10n.t("结果用大写十六进制；默认小写，与系统命令行工具一致"))
         case .uuid:
-            LitePadToggle(title: "大写",
+            LitePadToggle(title: L10n.t("大写"),
                           isOn: optionBinding(\.uuidUppercase),
-                          help: "标识用大写字母；默认小写")
+                          help: L10n.t("标识用大写字母；默认小写"))
             Button {
                 tools.regenerateUUID()
             } label: {
-                Label("重新生成", systemImage: "shuffle")
+                Label(L10n.t("重新生成"), systemImage: "shuffle")
             }
             .buttonStyle(PanelActionButtonStyle(tone: .neutral))
-            .help("换一个 UUID（打开工具时也会换）")
+            .help(L10n.t("换一个 UUID（打开工具时也会换）"))
         case .timestamp:
             LiquidSegmented(labels: TimestampUnit.allCases.map(\.displayName),
                             selectedIndex: TimestampUnit.allCases.firstIndex(of: tools.timestampUnit) ?? 0,
@@ -372,19 +374,34 @@ private struct ConverterSection: View {
             Button {
                 tools.fillTimestampNow()
             } label: {
-                Label("现在", systemImage: "clock.arrow.circlepath")
+                Label(L10n.t("现在"), systemImage: "clock.arrow.circlepath")
             }
             .buttonStyle(PanelActionButtonStyle(tone: .neutral))
-            .help("用当前时间填输入栏（按当前方向填时间戳或本地时间）")
+            .help(L10n.t("用当前时间填输入栏（按当前方向填时间戳或本地时间）"))
         case .html:
             if tools.direction == .encode {
-                LitePadToggle(title: "转义非 ASCII",
+                LitePadToggle(title: L10n.t("转义非 ASCII"),
                               isOn: optionBinding(\.htmlEscapesNonASCII),
-                              help: "连中文等非 ASCII 字符一起转为 &#xXXXX;；默认只转义 & < > \" ' 与不换行空格")
+                              help: L10n.t("连中文等非 ASCII 字符一起转为 &#xXXXX;；默认只转义 & < > \" ' 与不换行空格"))
                     .transition(.opacity)
             }
-        case .diff, .lines:
-            // 对比工具走自己的两栏排布，行操作没有工具专属选项
+        case .regex:
+            TextField(L10n.t("正则表达式"), text: optionBinding(\.regexPattern))
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(width: 200)
+            LitePadToggle(title: L10n.t("忽略大小写"),
+                          isOn: optionBinding(\.regexIgnoreCase),
+                          help: L10n.t("匹配时忽略大小写"))
+        case .columnNumbers:
+            LitePadToggle(title: L10n.t("补零对齐"),
+                          isOn: optionBinding(\.columnNumberPadZeros),
+                          help: L10n.t("按最大序号的位数把序号左侧补 0"))
+            LitePadToggle(title: L10n.t("从 0 开始"),
+                          isOn: optionBinding(\.columnNumberStartAtZero),
+                          help: L10n.t("默认从 1 开始编号"))
+        case .diff, .lines, .xml, .sql, .folderSearch:
+            // 对比工具走自己的两栏排布；行操作、格式化与文件夹搜索没有工具专属选项
             EmptyView()
         }
     }
@@ -396,18 +413,26 @@ private struct ConverterSection: View {
 
     /// 输入区与结果区的说明：时间戳按方向提示该输什么 / 会得到什么，其余工具说明来源
     private var inputDetail: String {
-        guard tools.kind == .timestamp else { return "编辑器选区 / 全文" }
-        return tools.direction == .encode
-            ? "Unix 时间戳（\(tools.timestampUnit.displayName)）"
-            : "本地时间，如 2024-01-02 03:04:05"
+        switch tools.kind {
+        case .regex: return L10n.t("被匹配的文本")
+        case .columnNumbers: return L10n.t("每行文本（按行加序号）")
+        case .timestamp:
+            return tools.direction == .encode
+                ? L10n.format("Unix 时间戳（%@）", tools.timestampUnit.displayName)
+                : L10n.t("本地时间，如 2024-01-02 03:04:05")
+        default: return L10n.t("编辑器选区 / 全文")
+        }
     }
 
     private var resultDetail: String {
-        if tools.errorMessage != nil { return "转换失败" }
+        if tools.errorMessage != nil { return L10n.t("转换失败") }
         switch tools.kind {
-        case .uuid: return "点「重新生成」换一个"
-        case .timestamp: return tools.direction == .encode ? "本地时间" : "Unix 时间戳"
-        default: return "实时更新"
+        case .uuid: return L10n.t("点「重新生成」换一个")
+        case .timestamp: return tools.direction == .encode ? L10n.t("本地时间") : L10n.t("Unix 时间戳")
+        case .regex: return L10n.t("匹配与捕获组")
+        case .columnNumbers: return L10n.t("加序号后的文本")
+        case .xml, .sql: return tools.direction == .encode ? L10n.t("格式化结果") : L10n.t("压缩结果")
+        default: return L10n.t("实时更新")
         }
     }
 
@@ -438,7 +463,7 @@ private struct DiffSection: View {
                         Button(other.displayName) { tools.fillDiffRight(from: other.text) }
                     }
                 } label: {
-                    Label("从标签页取 B", systemImage: "arrow.down.doc")
+                    Label(L10n.t("从标签页取 B"), systemImage: "arrow.down.doc")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.primary)
                         .padding(.horizontal, 9)
@@ -454,31 +479,31 @@ private struct DiffSection: View {
                 .controlSize(.small)
                 .fixedSize()
                 .disabled(otherTabs.isEmpty)
-                .help("把另一个标签页的全文填入 B 栏")
+                .help(L10n.t("把另一个标签页的全文填入 B 栏"))
 
-                LitePadToggle(title: "忽略大小写",
+                LitePadToggle(title: L10n.t("忽略大小写"),
                               isOn: optionBinding(\.diffIgnoreCase))
-                LitePadToggle(title: "忽略行首尾空白",
+                LitePadToggle(title: L10n.t("忽略行首尾空白"),
                               isOn: optionBinding(\.diffIgnoreWhitespace))
                 Spacer(minLength: 0)
             }
 
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
-                    PanelSectionLabel(title: "A", detail: "编辑器选区 / 全文")
-                    CodeTextEditor(text: leftBinding, placeholder: "文本 A")
+                    PanelSectionLabel(title: "A", detail: L10n.t("编辑器选区 / 全文"))
+                    CodeTextEditor(text: leftBinding, placeholder: L10n.t("文本 A"))
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    PanelSectionLabel(title: "B", detail: "手动输入")
-                    CodeTextEditor(text: rightBinding, placeholder: "文本 B")
+                    PanelSectionLabel(title: "B", detail: L10n.t("手动输入"))
+                    CodeTextEditor(text: rightBinding, placeholder: L10n.t("文本 B"))
                 }
             }
             .frame(minHeight: 90, maxHeight: .infinity)
 
             HStack(spacing: 8) {
-                PanelSectionLabel(title: "差异", detail: summary)
+                PanelSectionLabel(title: L10n.t("差异"), detail: summary)
                 Spacer(minLength: 0)
-                CopyButton(text: exportText, help: "复制差异文本（+ 新增 / - 删除）")
+                CopyButton(text: exportText, help: L10n.t("复制差异文本（+ 新增 / - 删除）"))
             }
 
             diffRows
@@ -504,9 +529,9 @@ private struct DiffSection: View {
     }
 
     private var summary: String {
-        if tools.diffLeft.isEmpty, tools.diffRight.isEmpty { return "两栏均无内容" }
-        if tools.diff.isIdentical { return "完全相同（\(tools.diff.rows.count) 行）" }
-        return "新增 \(tools.diff.added) 行 · 删除 \(tools.diff.removed) 行"
+        if tools.diffLeft.isEmpty, tools.diffRight.isEmpty { return L10n.t("两栏均无内容") }
+        if tools.diff.isIdentical { return L10n.format("完全相同（%d 行）", tools.diff.rows.count) }
+        return L10n.format("新增 %d 行 · 删除 %d 行", tools.diff.added, tools.diff.removed)
     }
 
     /// 差异导出为 `+` / `-` 前缀文本，便于贴到对话或邮件里
@@ -626,13 +651,13 @@ private struct LineOperationsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PanelSectionLabel(title: "操作", detail: "作用于输入文本的每一行")
+            PanelSectionLabel(title: L10n.t("操作"), detail: "作用于输入文本的每一行")
             operations
 
-            PanelSectionLabel(title: "输入", detail: "编辑器选区 / 全文")
-            CodeTextEditor(text: inputBinding, placeholder: "在此输入或粘贴文本")
+            PanelSectionLabel(title: L10n.t("输入"), detail: "编辑器选区 / 全文")
+            CodeTextEditor(text: inputBinding, placeholder: L10n.t("在此输入或粘贴文本"))
 
-            PanelSectionLabel(title: "结果", detail: resultDetail, isError: tools.errorMessage != nil)
+            PanelSectionLabel(title: L10n.t("结果"), detail: resultDetail, isError: tools.errorMessage != nil)
             PanelResultText(text: tools.errorMessage ?? tools.output,
                             isError: tools.errorMessage != nil)
 
@@ -642,17 +667,17 @@ private struct LineOperationsSection: View {
                 Button {
                     session.writeBackToolsResult(tools.output, replaceSelection: true, tab: tab)
                 } label: {
-                    Label("替换选区", systemImage: "arrow.triangle.2.circlepath")
+                    Label(L10n.t("替换选区"), systemImage: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(PanelActionButtonStyle(tone: .neutral))
-                .help("替换编辑器当前选区；无选区时插入到光标处")
+                .help(L10n.t("替换编辑器当前选区；无选区时插入到光标处"))
                 Button {
                     session.writeBackToolsResult(tools.output, replaceSelection: false, tab: tab)
                 } label: {
-                    Label("替换全文", systemImage: "arrow.clockwise")
+                    Label(L10n.t("替换全文"), systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(PanelActionButtonStyle(tone: .accent))
-                .help("用结果替换编辑器全文（可 ⌘Z 回滚）")
+                .help(L10n.t("用结果替换编辑器全文（可 ⌘Z 回滚）"))
             }
             .controlSize(.small)
             // 还没选操作时结果区是空的，写回会把选区清空；结果确实算成了空串（如整段都是行尾空白）
@@ -679,8 +704,8 @@ private struct LineOperationsSection: View {
                 .disabled(!isAvailable(kind))
                 .opacity(isAvailable(kind) ? 1 : 0.55)
                 .help(isAvailable(kind)
-                      ? "对输入的每一行执行：\(kind.displayName)"
-                      : "当前语法（\(tab.language.displayName)）没有行注释符号")
+                      ? L10n.format("对输入的每一行执行：%@", kind.displayName)
+                      : L10n.format("当前语法（%@）没有行注释符号", tab.language.displayName))
             }
         }
         .animation(Motion.control, value: tools.lineOperation)
@@ -692,8 +717,8 @@ private struct LineOperationsSection: View {
     }
 
     private var resultDetail: String {
-        if tools.errorMessage != nil { return "不可用" }
-        return tools.lineOperation?.displayName ?? "选择一项操作"
+        if tools.errorMessage != nil { return L10n.t("不可用") }
+        return tools.lineOperation?.displayName ?? L10n.t("选择一项操作")
     }
 
     private var inputBinding: Binding<String> {
@@ -771,7 +796,7 @@ private struct PanelResultText: View {
             // 只读结果区：不做文本选择也不参与命中测试，避免内层文本宿主张贴 I-beam 光标
             // （光标矩形按命中测试裁决，参与命中的内层文本会压过面板顶层的光标覆盖层）；
             // 需要复制时用「复制」按钮
-            Text(text.isEmpty ? "等待处理结果" : text)
+            Text(text.isEmpty ? L10n.t("等待处理结果") : text)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(isError ? InterfaceStyle.danger : (text.isEmpty ? InterfaceStyle.muted : Color.primary))
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -788,7 +813,7 @@ private struct PanelResultText: View {
 /// 本工程以 Command Line Tools 构建，SwiftUI 的 @State 宏插件不可用，瞬时状态用轻量对象承载
 private struct CopyButton: View {
     let text: String
-    var help = "复制结果到剪贴板"
+    var help = L10n.t("复制结果到剪贴板")
     @StateObject private var feedback = CopyFeedback()
 
     var body: some View {
@@ -798,7 +823,7 @@ private struct CopyButton: View {
             NSPasteboard.general.setString(text, forType: .string)
             feedback.showCopied()
         } label: {
-            Label(feedback.copied ? "已复制" : "复制",
+            Label(feedback.copied ? L10n.t("已复制") : L10n.t("复制"),
                   systemImage: feedback.copied ? "checkmark" : "doc.on.doc")
         }
         .buttonStyle(PanelActionButtonStyle(tone: .neutral))
@@ -851,5 +876,77 @@ private struct PanelIconButton: View {
         )
         .onHover { hover.isHovered = $0 }
         .help(help)
+    }
+}
+
+/// 文件夹搜索：选目录与条件后列出命中行，点结果打开文件并跳到对应行。
+/// 搜索在后台任务里跑，面板只消费结果
+private struct FolderSearchSection: View {
+    @ObservedObject private var search = FolderSearchState.shared
+    @EnvironmentObject private var session: EditorSession
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    search.chooseFolder()
+                } label: {
+                    Label(L10n.t("选择文件夹"), systemImage: "folder")
+                }
+                .buttonStyle(PanelActionButtonStyle(tone: .neutral))
+                Text(search.folder?.path ?? L10n.t("尚未选择文件夹"))
+                    .font(.system(size: 10))
+                    .foregroundStyle(InterfaceStyle.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 6) {
+                TextField(L10n.t("要搜索的文本"), text: $search.query)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+                    .onSubmit { search.search() }
+                Button(L10n.t("搜索")) { search.search() }
+                    .buttonStyle(PanelActionButtonStyle(tone: .accent))
+                    .disabled(search.folder == nil || search.query.isEmpty || search.isSearching)
+            }
+
+            HStack(spacing: 12) {
+                LitePadToggle(title: L10n.t("正则"), isOn: $search.useRegex)
+                LitePadToggle(title: L10n.t("大小写"), isOn: $search.caseSensitive)
+                LitePadToggle(title: L10n.t("全词"), isOn: $search.wholeWord)
+                Spacer(minLength: 0)
+            }
+
+            Text(search.summary.isEmpty ? " " : search.summary)
+                .font(.system(size: 10))
+                .foregroundStyle(InterfaceStyle.muted)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(search.results) { result in
+                        Button {
+                            session.openSearchResult(result)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(result.location)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(InterfaceStyle.accent)
+                                Text(result.preview)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
     }
 }

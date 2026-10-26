@@ -11,6 +11,10 @@ enum TextEncoding: String, CaseIterable, Identifiable {
     case utf32BE
     case utf32LE
     case gb18030
+    case big5
+    case shiftJIS
+    case eucKR
+    case latin1
 
     var id: String { rawValue }
 
@@ -20,11 +24,15 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         case .utf8BOM: return "Unicode (UTF-8) with BOM"
         case .utf16: return "Unicode (UTF-16)"
         case .utf16BE: return "Unicode (UTF-16BE)"
-        case .utf16LE: return "Unicode (UTF-16LE，无 BOM)"
+        case .utf16LE: return L10n.t("Unicode (UTF-16LE，无 BOM)")
         case .utf32: return "Unicode (UTF-32)"
         case .utf32BE: return "Unicode (UTF-32BE)"
-        case .utf32LE: return "Unicode (UTF-32LE，无 BOM)"
-        case .gb18030: return "简体中文 (GB18030)"
+        case .utf32LE: return L10n.t("Unicode (UTF-32LE，无 BOM)")
+        case .gb18030: return L10n.t("简体中文 (GB18030)")
+        case .big5: return L10n.t("繁体中文 (Big5)")
+        case .shiftJIS: return L10n.t("日文 (Shift-JIS)")
+        case .eucKR: return L10n.t("韩文 (EUC-KR)")
+        case .latin1: return L10n.t("西欧 (Latin-1)")
         }
     }
 
@@ -33,6 +41,14 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         rawValue: CFStringConvertEncodingToNSStringEncoding(
             CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
         )
+    )
+
+    /// Big5 / EUC-KR 在 Foundation 的 `String.Encoding` 里没有静态成员，按 CFString 常量构造
+    static let big5Encoding = String.Encoding(
+        rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(0x0A03))
+    )
+    static let eucKREncoding = String.Encoding(
+        rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(0x0940))
     )
 
     /// 对应的 Foundation 编码（供 IANA 名称反查与解码尝试复用）
@@ -46,6 +62,10 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         case .utf32BE: return .utf32BigEndian
         case .utf32LE: return .utf32LittleEndian
         case .gb18030: return TextEncoding.gb18030Encoding
+        case .big5: return TextEncoding.big5Encoding
+        case .shiftJIS: return .shiftJIS
+        case .eucKR: return TextEncoding.eucKREncoding
+        case .latin1: return .isoLatin1
         }
     }
 
@@ -54,8 +74,12 @@ enum TextEncoding: String, CaseIterable, Identifiable {
         allCases.first { $0.stringEncoding == encoding }
     }
 
-    /// 无 BOM 文本可参与优先级尝试的编码；BOM 变体由 BOM 探测固定处理
-    private static let detectionCandidates: [TextEncoding] = [.utf8, .gb18030]
+    /// 无 BOM 文本可参与优先级尝试的编码；BOM 变体由 BOM 探测固定处理。
+    /// 新加的旧式编码默认不进入默认优先级（`AppSettings` 仍是 UTF-8 → GB18030），
+    /// 只在用户把「编码优先级」调成含它们时按顺序尝试
+    private static let detectionCandidates: [TextEncoding] = [
+        .utf8, .gb18030, .big5, .shiftJIS, .eucKR, .latin1
+    ]
     /// 宽字符编码仅在字节确含 0x00 时才参与尝试（纯 ASCII 文本按宽字符解码只会得到乱码）
     private static let wideCandidates: [TextEncoding] = [.utf16LE, .utf16BE, .utf32LE, .utf32BE]
 
@@ -89,6 +113,14 @@ enum TextEncoding: String, CaseIterable, Identifiable {
             return text.data(using: .utf32LittleEndian)
         case .gb18030:
             return text.data(using: TextEncoding.gb18030Encoding)
+        case .big5:
+            return text.data(using: TextEncoding.big5Encoding)
+        case .shiftJIS:
+            return text.data(using: .shiftJIS)
+        case .eucKR:
+            return text.data(using: TextEncoding.eucKREncoding)
+        case .latin1:
+            return text.data(using: .isoLatin1)
         }
     }
 
@@ -124,6 +156,14 @@ enum TextEncoding: String, CaseIterable, Identifiable {
             return String(data: data, encoding: .utf32LittleEndian)
         case .gb18030:
             return String(data: data, encoding: TextEncoding.gb18030Encoding)
+        case .big5:
+            return String(data: data, encoding: TextEncoding.big5Encoding)
+        case .shiftJIS:
+            return String(data: data, encoding: .shiftJIS)
+        case .eucKR:
+            return String(data: data, encoding: TextEncoding.eucKREncoding)
+        case .latin1:
+            return String(data: data, encoding: .isoLatin1)
         }
     }
 

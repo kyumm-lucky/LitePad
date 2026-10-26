@@ -10,8 +10,8 @@ enum LaunchAction: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .newDocument: return "创建新文稿"
-        case .doNothing: return "不创建"
+        case .newDocument: return L10n.t("创建新文稿")
+        case .doNothing: return L10n.t("不创建")
         }
     }
 }
@@ -26,9 +26,9 @@ enum ExternalChangeAction: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .keepVersion: return "保留 LitePad 的版本"
-        case .ask: return "询问如何更新"
-        case .update: return "更新到被更改的版本"
+        case .keepVersion: return L10n.t("保留 LitePad 的版本")
+        case .ask: return L10n.t("询问如何更新")
+        case .update: return L10n.t("更新到被更改的版本")
         }
     }
 }
@@ -43,9 +43,9 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .system: return "匹配系统"
-        case .light: return "浅色"
-        case .dark: return "深色"
+        case .system: return L10n.t("匹配系统")
+        case .light: return L10n.t("浅色")
+        case .dark: return L10n.t("深色")
         }
     }
 }
@@ -59,8 +59,8 @@ enum StatusBarBackgroundStyle: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .tinted: return "色调"
-        case .opaque: return "不透明"
+        case .tinted: return L10n.t("色调")
+        case .opaque: return L10n.t("不透明")
         }
     }
 }
@@ -74,8 +74,8 @@ enum WritingDirectionOption: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .ltr: return "从左到右"
-        case .rtl: return "从右到左"
+        case .ltr: return L10n.t("从左到右")
+        case .rtl: return L10n.t("从右到左")
         }
     }
 }
@@ -89,12 +89,32 @@ struct InvisiblesOptions: Equatable {
     var otherControl = true
 }
 
+/// 界面语言：影响菜单栏、状态栏、面板与设置页的文案；正文内容与语法高亮不受影响
+enum InterfaceLanguage: String, CaseIterable, Identifiable {
+    case chinese
+    case english
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .chinese: return L10n.t("中文")
+        case .english: return "English"
+        }
+    }
+}
+
 /// 全局设置：UserDefaults 持久化的单例，仅在主线程访问
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
     private let defaults = UserDefaults.standard
 
     // MARK: - 通用
+
+    /// 界面语言；切换后已显示的界面按新语言重建
+    @Published var interfaceLanguage: InterfaceLanguage {
+        didSet { defaults.set(interfaceLanguage.rawValue, forKey: "settings.interfaceLanguage") }
+    }
 
     @Published var restoreSessionOnLaunch: Bool {
         didSet { defaults.set(restoreSessionOnLaunch, forKey: "settings.restoreSession") }
@@ -189,7 +209,7 @@ final class AppSettings: ObservableObject {
 
     /// 字体选择框的展示名；系统内置等宽字体的内部名不适合展示
     var editorFontDisplayName: String {
-        editorFont.fontName.hasPrefix(".") ? "系统等宽" : (editorFont.displayName ?? editorFontName)
+        editorFont.fontName.hasPrefix(".") ? L10n.t("系统等宽") : (editorFont.displayName ?? editorFontName)
     }
     @Published var ligaturesEnabled: Bool {
         didSet { defaults.set(ligaturesEnabled, forKey: "settings.ligatures") }
@@ -391,6 +411,8 @@ final class AppSettings: ObservableObject {
 
     private init() {
         restoreSessionOnLaunch = defaults.object(forKey: "settings.restoreSession") as? Bool ?? true
+        interfaceLanguage = defaults.string(forKey: "settings.interfaceLanguage")
+            .flatMap(InterfaceLanguage.init(rawValue:)) ?? .chinese
         launchAction = defaults.string(forKey: "settings.launchAction").flatMap(LaunchAction.init(rawValue:)) ?? .newDocument
         autosaveEnabled = defaults.object(forKey: "settings.autosave") as? Bool ?? true
         trimTrailingWhitespaceOnSave = defaults.object(forKey: "settings.saveTrimTrailingWhitespace") as? Bool ?? false

@@ -8,7 +8,18 @@ import UniformTypeIdentifiers
 @MainActor
 final class EditorSession: ObservableObject {
     @Published private(set) var tabs: [EditorTab] = []
-    @Published var selectedTabIndex: Int = 0
+    @Published var selectedTabIndex: Int = 0 {
+        didSet {
+            // 参考栏里那张标签被切到主栏：两栏显示同一文稿没有意义，直接收起参考栏
+            if let splitTabID, splitTabID == selectedTab?.id {
+                self.splitTabID = nil
+            }
+        }
+    }
+    /// 右侧参考栏（只读分屏）的标签标识；nil 表示未分屏
+    @Published var splitTabID: UUID?
+    /// 参考栏宽度占编辑区的比例（0.25…0.75）
+    @Published var splitFraction: CGFloat = 0.5
     /// 当前展开的下拉面板（状态栏三项 / 工具）；nil 表示全部收起
     @Published var expandedMenu: WindowMenuKind?
     /// 面板中悬停的选项行索引（用于悬停高亮）
@@ -26,6 +37,9 @@ final class EditorSession: ObservableObject {
     @Published var toolsDrawerWidth = CGFloat(AppSettings.defaultToolsPanelWidth(for: .unicode))
     /// 工具面板的输入 / 选项 / 结果
     let tools = TextToolsState()
+    /// 文件夹工作区的根目录：nil 时左侧不显示文件栏；选中后记住路径
+    @Published var workspaceFolder: URL?
+    static let workspaceFolderKey = "workspaceFolder.path"
 
     /// 启动会话恢复的 UserDefaults 键
     static let sessionKey = "lastSession.urls"
@@ -33,21 +47,40 @@ final class EditorSession: ObservableObject {
     var autosaveCancellables: [UUID: AnyCancellable] = [:]
     /// 每个标签页的恢复区订阅（R6：未标题正文去抖写入，照自动保存的形态）
     var recoveryCancellables: [UUID: AnyCancellable] = [:]
+    /// 按文件监听磁盘变化：打开 / 另存为 / 关闭时由 persistSession 同步监听集合
+    private let fileWatcher = FileWatcher()
+    private var watchedFileURLs: Set<URL> = []
+    /// 外部改动检测的去抖任务：一次写盘会连发多个 vnode 事件，合并成一次检查
+    private var externalCheckTask: Task<Void, Never>?
     /// 未标题文稿的恢复区（R6 / R7）：与会话恢复并列的另一条通道，两者互不读写对方的键
     let recovery = RecoveryStore.shared
+    /// 已命名文稿的恢复区：自动保存之外的兜底副本，启动时按路径提示恢复
+    let namedRecovery = NamedRecoveryStore.shared
+    /// 每个标签页的已命名恢复区订阅（正文与保存基准不一致时去抖写草稿）
+    var namedRecoveryCancellables: [UUID: AnyCancellable] = [:]
     /// 条目归属表：标题 → 当前写下这条条目的标签。恢复区按稳定标题为键，同名条目可能来自
     /// 上一次运行、也可能已经换了写入方，只有真正写过它的标签才有资格删掉它 ——
     /// 按标题查找的删除出口一旦不校验归属，就会误删同名标签刚写进去的正文
     var titleOwners: [String: UUID] = [:]
     /// 启动时恢复区里有待恢复的条目：会话构造期读一次，提示要等首帧之后才弹
     var hasPendingRecovery = false
+    /// 启动时有已命名文稿的恢复草稿：同样等首帧之后提示
+    var hasPendingNamedRecovery = false
 
     init() {
+        if let path = UserDefaults.standard.string(forKey: Self.workspaceFolderKey),
+           FileManager.default.fileExists(atPath: path) {
+            workspaceFolder = URL(fileURLWithPath: path)
+        }
         hasPendingRecovery = !recovery.allEntries().isEmpty
+        hasPendingNamedRecovery = !namedRecovery.allEntries().isEmpty
         restoreSessionOrNewTab()
         // 恢复区的写入失败与超限要有可见提示：写不进去等于「内容不丢」降级成无保护
         recovery.onAlert = { [weak self] alert in
             self?.reportRecoveryAlert(alert)
+        }
+        namedRecovery.onAlert = { [weak self] alert in
+            self?.reportNamedRecoveryAlert(alert)
         }
         // 应用激活时检测外部修改；退出前记录当前会话
         NotificationCenter.default.addObserver(
@@ -83,12 +116,56 @@ final class EditorSession: ObservableObject {
         return tabs[selectedTabIndex]
     }
 
+    /// 参考栏里的标签（只读分屏）；标签被关掉后自动视为不在
+    var splitTab: EditorTab? {
+        guard let splitTabID else { return nil }
+        return tabs.first { $0.id == splitTabID }
+    }
+
+    /// 在右侧参考栏打开一张标签：只读展示，不参与菜单命令的目标
+    func openInSplit(_ tab: EditorTab) {
+        guard tab.id != selectedTab?.id else { return }
+        splitTabID = tab.id
+    }
+
+    func closeSplit() {
+        splitTabID = nil
+    }
+
+    /// 拖拽分隔条调整参考栏宽度：保持在 0.25…0.75，免得把一侧压没
+    func resizeSplit(to fraction: CGFloat) {
+        splitFraction = min(max(fraction, 0.25), 0.75)
+    }
+
+    /// 参考栏被点击：把它提升为主编辑区，原主栏降为参考栏。
+    /// 两栏因此都可以编辑，只是同一时刻由主栏接收菜单命令与键盘输入
+    func promoteReferencePaneToPrimary() {
+        guard let splitTabID,
+              let index = tabs.firstIndex(where: { $0.id == splitTabID }) else { return }
+        let previousPrimaryID = selectedTab?.id
+        // 先换参考栏标识，再改选中标签：反序会被 selectedTabIndex 的 didSet 当成「两栏同一文稿」收起
+        self.splitTabID = previousPrimaryID
+        selectedTabIndex = index
+        pendingEditorFocus = true
+    }
+
+    /// 主编辑视图构建时取一次「换栏后需要聚焦」的请求
+    func consumeEditorFocusRequest() -> Bool {
+        guard pendingEditorFocus else { return false }
+        pendingEditorFocus = false
+        return true
+    }
+
+    private var pendingEditorFocus = false
+
     /// 新增标签页的统一入口：挂接自动保存与恢复区订阅
-    private func addTab(_ tab: EditorTab) {
+    func addTab(_ tab: EditorTab) {
         tabs.append(tab)
         selectedTabIndex = tabs.count - 1
         installAutosave(for: tab)
-        // 恢复区只承载未标题文稿：文件标签永不写恢复区，不必为它常驻一条去抖管线
+        // 已命名文稿的恢复草稿与自动保存并列：两者都按「正文 ≠ 保存基准」触发
+        installNamedRecovery(for: tab)
+        // 恢复区只承载未标题文稿：文件标签永不写未标题恢复区，不必为它常驻一条去抖管线
         if tab.untitledTitle != nil {
             installRecovery(for: tab)
         }
@@ -120,12 +197,27 @@ final class EditorSession: ObservableObject {
         addUntitledTab()
     }
 
+    /// 拖拽排序：把 id 对应的标签移动到 targetIndex（原数组口径）处，活动标签保持不变
+    func moveTab(id: UUID, to targetIndex: Int) {
+        guard let source = tabs.firstIndex(where: { $0.id == id }),
+              tabs.indices.contains(targetIndex),
+              source != targetIndex else { return }
+        let selected = selectedTab
+        var reordered = tabs
+        let moving = reordered.remove(at: source)
+        reordered.insert(moving, at: min(targetIndex, reordered.count))
+        tabs = reordered
+        if let selected, let index = tabs.firstIndex(where: { $0 === selected }) {
+            selectedTabIndex = index
+        }
+    }
+
     func openFile() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
-        panel.message = "选择要编辑的文件"
+        panel.message = L10n.t("选择要编辑的文件")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url: url)
     }
@@ -154,14 +246,26 @@ final class EditorSession: ObservableObject {
                 priority: settings.encodingPriority,
                 respectCharsetDeclaration: settings.respectCharsetDeclaration)
             let lineEnding = LineEnding.detect(in: content)
+            // 打开路径同样会建立保存基准：解码结果必须能按同一编码还原磁盘字节。
+            // 不能往返说明这次解码是宽容兜底（替换字符）或认错了编码，此时文本可能已不是原文，
+            // 一旦自动保存就会按错误编码改写文件——把标签标成「编码未确认」，由会话禁用自动保存
+            let verified = encoding.roundTrips(content, with: data)
             addTab(EditorTab(fileURL: target, text: content,
-                             encoding: encoding, lineEnding: lineEnding))
+                             encoding: encoding, lineEnding: lineEnding,
+                             encodingUnverified: !verified))
             if recordsRecent {
                 recordRecent(url)
             }
             persistSession()
+            if !verified, alertOnError {
+                presentNotice(title: L10n.t("无法确认文本编码"),
+                              message: L10n.format("“%@”的磁盘字节与按「%@」解码的结果无法往返校验，", target.lastPathComponent, encoding.displayName)
+                                  + L10n.t("通常说明文件不是该编码或内容已损坏。\n")
+                                  + L10n.t("文稿已打开，但自动保存已停用；请用状态栏编码下拉里的「按此编码重新载入」选定正确编码，")
+                                  + L10n.t("或手动保存（保存前会再次确认）。"))
+            }
         } catch where alertOnError {
-            presentErrorAlert(title: "无法读取文件", message: error.localizedDescription)
+            presentErrorAlert(title: L10n.t("无法读取文件"), message: error.localizedDescription)
         } catch {
             // 会话恢复场景静默跳过坏文件
         }
@@ -171,8 +275,8 @@ final class EditorSession: ObservableObject {
     func openRecent(_ url: URL) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             recentFiles = RecentFiles.remove(url)
-            presentErrorAlert(title: "无法打开文件",
-                              message: "文件不存在或已被移动：\(url.lastPathComponent)")
+            presentErrorAlert(title: L10n.t("无法打开文件"),
+                              message: L10n.format("文件不存在或已被移动：%@", url.lastPathComponent))
             return
         }
         open(url: url)
@@ -204,8 +308,8 @@ final class EditorSession: ObservableObject {
             open(url: url)
         }
         guard !rejected.isEmpty else { return }
-        presentNotice(title: "已跳过 \(rejected.count) 个项目",
-                      message: "下面这些不能打开为文稿（目录、图片、影音、压缩包等）：\n"
+        presentNotice(title: L10n.format("已跳过 %d 个项目", rejected.count),
+                      message: L10n.t("下面这些不能打开为文稿（目录、图片、影音、压缩包等）：\n")
                           + rejected.joined(separator: "\n"))
     }
 
@@ -250,9 +354,9 @@ final class EditorSession: ObservableObject {
             guard save(tab: tab) else { return }
         }
         guard skippedUntitled > 0 else { return }
-        presentNotice(title: "已跳过未标题标签",
-                      message: "有 \(skippedUntitled) 个未标题标签存在未保存的改动，它们还没有对应的文件。"
-                          + "请先对这些标签使用「另存为…」指定文件。")
+        presentNotice(title: L10n.t("已跳过未标题标签"),
+                      message: L10n.format("有 %d 个未标题标签存在未保存的改动，它们还没有对应的文件。", skippedUntitled)
+                          + L10n.t("请先对这些标签使用「另存为…」指定文件。"))
     }
 
     /// 标签右键菜单五项关闭的作用集合（KTD17 / R11）：以被右键的那张标签为「当前」一次算清，
@@ -285,8 +389,8 @@ final class EditorSession: ObservableObject {
     func revealInFinder(_ tab: EditorTab?) {
         guard let tab, let url = tab.fileURL else { return }
         guard FileManager.default.fileExists(atPath: url.path) else {
-            presentErrorAlert(title: "找不到文件",
-                              message: "“\(url.lastPathComponent)”已不在原位置：\(url.path)")
+            presentErrorAlert(title: L10n.t("找不到文件"),
+                              message: L10n.format("“%@”已不在原位置：%@", url.lastPathComponent, url.path))
             return
         }
         NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -348,15 +452,22 @@ final class EditorSession: ObservableObject {
         for id in closing {
             autosaveCancellables.removeValue(forKey: id)
             recoveryCancellables.removeValue(forKey: id)
+            namedRecoveryCancellables.removeValue(forKey: id)
         }
         // 关闭标签且确认不保存或已保存：这些标签的恢复区条目到此离开（HTD 的第二个出口）
         for tab in closed {
             retireRecoveryEntry(for: tab)
+            if let url = tab.fileURL {
+                namedRecovery.remove(path: url.path)
+            }
         }
 
         let previous = tabs
         let previousSelection = selectedTabIndex
         tabs.removeAll { closing.contains($0.id) }
+        if let splitTabID, closing.contains(splitTabID) {
+            self.splitTabID = nil
+        }
 
         if tabs.isEmpty {
             // 始终保留一个空标签，与 Notepad++ 行为一致
@@ -381,6 +492,9 @@ final class EditorSession: ObservableObject {
         // 逐个确认期间一条都不动——取消退出时现场必须与发起前一致（KTD17）
         for tab in tabs {
             retireRecoveryEntry(for: tab)
+            if let url = tab.fileURL {
+                namedRecovery.remove(path: url.path)
+            }
         }
         return true
     }
@@ -389,16 +503,81 @@ final class EditorSession: ObservableObject {
     func persistSession() {
         UserDefaults.standard.set(tabs.compactMap(\.fileURL).map(\.absoluteString),
                                   forKey: Self.sessionKey)
+        // 监听集合始终跟当前标签对齐：打开、另存为、关闭都收敛到这一处
+        refreshFileWatchers()
     }
 
-    /// 打开/关闭查找面板（Cmd+F 切换）
+    /// 把文件监听的集合同步到当前标签：新增挂载、关闭回收。事件只触发检查，
+    /// 「保留 / 询问 / 更新」策略仍由 checkExternalChanges 决定
+    private func refreshFileWatchers() {
+        let urls = Set(tabs.compactMap(\.fileURL).map(\.standardizedFileURL))
+        for url in urls.subtracting(watchedFileURLs) {
+            fileWatcher.watch(url) { [weak self] in
+                Task { @MainActor in self?.scheduleExternalCheck() }
+            }
+        }
+        for url in watchedFileURLs.subtracting(urls) {
+            fileWatcher.unwatch(url)
+        }
+        watchedFileURLs = urls
+    }
+
+    /// 磁盘事件去抖后执行一次既有检查：同一批写入只提示 / 重载一次
+    private func scheduleExternalCheck() {
+        externalCheckTask?.cancel()
+        externalCheckTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            self?.checkExternalChanges()
+        }
+    }
+
+    /// 打开/关闭查找面板（Cmd+F 切换）：关闭只收起，条件留在 lastFind 里供下次恢复
     func toggleFind() {
         guard let tab = selectedTab else { return }
         if tab.findState == nil {
-            tab.applyFindState(FindState())
+            tab.applyFindState(tab.lastFind ?? FindState())
         } else {
-            tab.findState = nil
+            tab.closeFindPanel()
         }
+    }
+
+    /// 查找下一个 / 上一个（Cmd+G / Shift+Cmd+G）：面板未打开时按上次条件先打开，
+    /// 查询为空或没有匹配时不做任何事，避免抢走编辑器焦点
+    func findStep(_ delta: Int) {
+        guard let tab = selectedTab else { return }
+        if tab.findState == nil {
+            tab.applyFindState(tab.lastFind ?? FindState())
+        }
+        guard let state = tab.findState, !state.query.isEmpty, !state.matches.isEmpty else { return }
+        tab.navigateMatch(delta)
+    }
+
+    /// 打开跨文件搜索结果并跳到对应行：标签视图可能刚刚创建，推迟一拍再定位
+    func openSearchResult(_ result: FolderSearchResult) {
+        open(url: result.url)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, let tab = self.selectedTab else { return }
+            tab.bridge.goToLine?(result.line)
+        }
+    }
+
+    // MARK: - 文件夹工作区
+
+    func chooseWorkspaceFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = L10n.t("选择文件夹工作区")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        workspaceFolder = url
+        UserDefaults.standard.set(url.path, forKey: Self.workspaceFolderKey)
+    }
+
+    func closeWorkspace() {
+        workspaceFolder = nil
+        UserDefaults.standard.removeObject(forKey: Self.workspaceFolderKey)
     }
 
     // MARK: - 工具抽屉
@@ -463,6 +642,39 @@ final class EditorSession: ObservableObject {
         selectedTab?.bridge.lineOperation?(kind)
     }
 
+    /// 当前行上移 / 下移（-1 = 上，1 = 下）：同样必须在视图层走撤销协议
+    func moveCurrentLine(_ direction: Int) {
+        selectedTab?.bridge.moveLine?(direction)
+    }
+
+    /// 复制当前行
+    func duplicateCurrentLine() {
+        selectedTab?.bridge.duplicateLine?()
+    }
+
+    /// 在光标处插入日期时间
+    func insertTimestamp() {
+        selectedTab?.bridge.insertTimestamp?()
+    }
+
+    /// 切换当前行书签
+    func toggleBookmark() {
+        selectedTab?.bridge.toggleBookmark?()
+    }
+
+    /// 跳到下一个 / 上一个书签（1 / -1）
+    func stepBookmark(_ direction: Int) {
+        selectedTab?.bridge.stepBookmark?(direction)
+    }
+
+    func toggleFold() {
+        selectedTab?.bridge.toggleFold?()
+    }
+
+    func unfoldAll() {
+        selectedTab?.bridge.unfoldAll?()
+    }
+
     /// 行操作在当前标签上是否可用：没有打开的标签一律不可用；
     /// 注释类操作还要求当前语法有行注释符号（纯文本、HTML、JSON 置灰），
     /// 与抽屉里操作按钮的可用性同一个口径
@@ -476,10 +688,10 @@ final class EditorSession: ObservableObject {
         guard let tab = selectedTab else { return }
         let maxLine = max(1, tab.stats.totalLines)
         let alert = NSAlert()
-        alert.messageText = "跳转到行"
-        alert.informativeText = "输入要跳转到的行号（1 - \(maxLine)）"
+        alert.messageText = L10n.t("跳转到行")
+        alert.informativeText = L10n.format("输入要跳转到的行号（1 - %d）", maxLine)
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        input.placeholderString = "行号"
+        input.placeholderString = L10n.t("行号")
         alert.accessoryView = input
         alert.window.initialFirstResponder = input
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -503,11 +715,11 @@ final class EditorSession: ObservableObject {
 
     func confirmSave(of tab: EditorTab) -> SaveChoice {
         let alert = NSAlert()
-        alert.messageText = "是否保存对“\(tab.displayName)”的更改？"
-        alert.informativeText = "如果不保存，更改将会丢失。"
-        alert.addButton(withTitle: "保存")
-        alert.addButton(withTitle: "不保存")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = L10n.format("是否保存对“%@”的更改？", tab.displayName)
+        alert.informativeText = L10n.t("如果不保存，更改将会丢失。")
+        alert.addButton(withTitle: L10n.t("保存"))
+        alert.addButton(withTitle: L10n.t("不保存"))
+        alert.addButton(withTitle: L10n.t("取消"))
         switch alert.runModal() {
         case .alertFirstButtonReturn: return .save
         case .alertSecondButtonReturn: return .discard
