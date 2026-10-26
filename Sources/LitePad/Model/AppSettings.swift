@@ -107,13 +107,15 @@ enum InterfaceLanguage: String, CaseIterable, Identifiable {
 /// 全局设置：UserDefaults 持久化的单例，仅在主线程访问
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
+    /// 界面语言的持久化键；`L10n` 直接读它，避免经 `shared` 造成静态初始化递归
+    static let interfaceLanguageKey = "settings.interfaceLanguage"
     private let defaults = UserDefaults.standard
 
     // MARK: - 通用
 
     /// 界面语言；切换后已显示的界面按新语言重建
     @Published var interfaceLanguage: InterfaceLanguage {
-        didSet { defaults.set(interfaceLanguage.rawValue, forKey: "settings.interfaceLanguage") }
+        didSet { defaults.set(interfaceLanguage.rawValue, forKey: Self.interfaceLanguageKey) }
     }
 
     @Published var restoreSessionOnLaunch: Bool {
@@ -411,7 +413,7 @@ final class AppSettings: ObservableObject {
 
     private init() {
         restoreSessionOnLaunch = defaults.object(forKey: "settings.restoreSession") as? Bool ?? true
-        interfaceLanguage = defaults.string(forKey: "settings.interfaceLanguage")
+        interfaceLanguage = defaults.string(forKey: Self.interfaceLanguageKey)
             .flatMap(InterfaceLanguage.init(rawValue:)) ?? .chinese
         launchAction = defaults.string(forKey: "settings.launchAction").flatMap(LaunchAction.init(rawValue:)) ?? .newDocument
         autosaveEnabled = defaults.object(forKey: "settings.autosave") as? Bool ?? true

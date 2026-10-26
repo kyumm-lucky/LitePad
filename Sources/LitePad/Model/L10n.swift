@@ -3,8 +3,12 @@ import Foundation
 /// 界面文案本地化：以中文原文为键查英文表，未收录的条目原样返回中文。
 /// 语言由设置里的「界面语言」决定，不随系统语言变化；正文、文件名与语法高亮不受影响
 enum L10n {
+    /// 直接读 UserDefaults 而不是 `AppSettings.shared`：`AppSettings.init` 会经
+    /// `LanguageDefinition.all` 调到 `L10n.t`，若这里再回读单例就构成静态初始化递归，
+    /// libdispatch 会以「trying to lock recursively」崩溃
     static var isEnglish: Bool {
-        AppSettings.shared.interfaceLanguage == .english
+        UserDefaults.standard.string(forKey: AppSettings.interfaceLanguageKey)
+            == InterfaceLanguage.english.rawValue
     }
 
     static func t(_ chinese: String) -> String {
