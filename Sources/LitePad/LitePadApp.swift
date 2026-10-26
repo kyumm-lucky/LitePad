@@ -74,6 +74,8 @@ struct LitePadApp: App {
                     .keyboardShortcut("s", modifiers: .command)
                 Button(L10n.t("另存为…")) { session.saveAsSelectedTab() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button(L10n.t("统一换行符")) { session.unifyLineEndings() }
+                    .disabled(session.selectedTab == nil)
                 Button(L10n.t("保存全部")) { session.saveAll() }
                 Button(L10n.t("查找…")) { session.toggleFind() }
                     .keyboardShortcut("f", modifiers: .command)
@@ -81,6 +83,8 @@ struct LitePadApp: App {
                     .keyboardShortcut("g", modifiers: .command)
                 Button(L10n.t("查找上一个")) { session.findStep(-1) }
                     .keyboardShortcut("g", modifiers: [.command, .shift])
+                Button(L10n.t("用选区查找")) { session.useSelectionForFind() }
+                    .keyboardShortcut("e", modifiers: .command)
                 Button(L10n.t("跳转到行…")) { session.goToLine() }
                     .keyboardShortcut("l", modifiers: .command)
                 Divider()
@@ -97,6 +101,9 @@ struct LitePadApp: App {
                     PrintController.shared.printDocument(tab.text, jobName: tab.displayName)
                 }
                 .keyboardShortcut("p", modifiers: .command)
+                Divider()
+                Button(L10n.t("文件摘要")) { session.showFileSummary() }
+                    .disabled(session.selectedTab == nil)
             }
             CommandGroup(replacing: .appSettings) {
                 Button(L10n.t("设置…")) { session.toggleSettings() }
@@ -112,6 +119,11 @@ struct LitePadApp: App {
                             .disabled(!session.isLineOperationAvailable(kind))
                     }
                 }
+                Divider()
+                Button(L10n.t("全选所有匹配")) { session.selectAllMatches() }
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                Button(L10n.t("撤销光标")) { session.undoCursor() }
+                    .keyboardShortcut("u", modifiers: .command)
                 Divider()
                 Button(L10n.t("上移当前行")) { session.moveCurrentLine(-1) }
                     .keyboardShortcut(.upArrow, modifiers: [.command, .option])
@@ -150,6 +162,10 @@ struct LitePadApp: App {
                 Toggle(L10n.t("不可见元素"), isOn: $settings.showInvisibles)
                 Toggle(L10n.t("缩进指示"), isOn: $settings.showIndentGuides)
                 Toggle(L10n.t("当前行高亮"), isOn: $settings.highlightCurrentLine)
+                Toggle(L10n.t("专注模式"),
+                       isOn: Binding(get: { session.isFocusMode },
+                                     set: { _ in session.toggleFocusMode() }))
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
                 Divider()
                 Button(L10n.t("关闭参考栏")) { session.closeSplit() }
                     .keyboardShortcut("\\", modifiers: [.command, .shift])

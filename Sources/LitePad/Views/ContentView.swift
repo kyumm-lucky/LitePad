@@ -23,11 +23,12 @@ struct ContentView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             HStack(spacing: 0) {
-                if let folder = session.workspaceFolder {
+                // 专注模式隐藏侧栏与工具抽屉（R12），只留编辑区与参考栏
+                if !session.isFocusMode, let folder = session.workspaceFolder {
                     WorkspaceSidebarView(folder: folder) { session.closeWorkspace() }
                 }
                 mainColumn
-                if let tab = session.selectedTab, session.activeTool != nil {
+                if !session.isFocusMode, let tab = session.selectedTab, session.activeTool != nil {
                     ToolsDrawer(tools: session.tools,
                                 tab: tab,
                                 width: drawerWidth,
@@ -108,7 +109,10 @@ struct ContentView: View {
     /// 主栏：标签栏 + 编辑区 + 状态栏，右侧给工具抽屉腾出宽度
     private var mainColumn: some View {
         VStack(spacing: 0) {
-            TabBarView()
+            // 专注模式同时隐藏标签栏与状态栏（R12）；参考栏分支不包裹，专注模式下仍保留
+            if !session.isFocusMode {
+                TabBarView()
+            }
             if let split = session.splitTab, let tab = session.selectedTab {
                 GeometryReader { proxy in
                     HStack(spacing: 0) {
@@ -127,7 +131,9 @@ struct ContentView: View {
             } else {
                 emptyView
             }
-            statusBar(for: session.selectedTab)
+            if !session.isFocusMode {
+                statusBar(for: session.selectedTab)
+            }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.clear)
@@ -476,6 +482,11 @@ private struct StatusBarView: View {
                 Text(L10n.format("折叠：%d", tab.foldedRanges.count))
             }
             Text(tab.isDirty ? L10n.t("未保存") : "-")
+            // 正文混用多种换行符时提示（R8）：只提示不自动改写，统一由「文件 → 统一换行符」决定
+            if tab.hasMixedLineEndings {
+                Text(L10n.t("混合换行"))
+                    .foregroundStyle(Color.orange)
+            }
             HStack(spacing: 0) {
                 StatusBarMenu(label: tab.language.displayName, onOpen: { onOpen(.language) })
                 statusBarMenuSeparator

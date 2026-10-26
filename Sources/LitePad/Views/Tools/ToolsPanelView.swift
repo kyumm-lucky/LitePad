@@ -403,6 +403,35 @@ private struct ConverterSection: View {
         case .diff, .lines, .xml, .sql, .folderSearch:
             // 对比工具走自己的两栏排布；行操作、格式化与文件夹搜索没有工具专属选项
             EmptyView()
+        case .unicodeNormalization:
+            // 四档形式的名称较长，用下拉选择器而不是分段控件：分段控件在 360pt 宽的抽屉里放不下
+            Menu {
+                ForEach(UnicodeNormalizationForm.allCases) { form in
+                    Button(form.displayName) {
+                        tools.normalizationForm = form
+                        tools.recompute()
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(tools.normalizationForm.displayName)
+                        .font(.system(size: 11, weight: .medium))
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(InterfaceStyle.raised,
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .controlSize(.small)
+            .fixedSize()
         }
     }
 

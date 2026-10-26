@@ -10,6 +10,8 @@ struct EditorAppearanceConfig: Equatable {
     var wrapIndent: Int
     var writingDirection: NSWritingDirection
     var lineNumbers: Bool
+    /// 系统拼写检查开关：设置页切换后由 apply(config:) 即时同步到编辑视图
+    var spellCheck: Bool
     var invisibles: InvisiblesOptions?
     var indentGuides: Bool
     /// 一级缩进的宽度：驱动缩进指示线，并换算文本视图的制表位宽度（KTD10）
@@ -31,6 +33,7 @@ struct EditorAppearanceConfig: Equatable {
             wrapIndent: settings.wrapIndentEnabled ? settings.wrapIndentChars : 0,
             writingDirection: settings.writingDirection == .rtl ? .rightToLeft : .leftToRight,
             lineNumbers: settings.showLineNumbers,
+            spellCheck: settings.spellCheckEnabled,
             invisibles: settings.showInvisibles ? settings.invisibles : nil,
             indentGuides: settings.showIndentGuides,
             indentWidth: IndentRules.clampedWidth(settings.indentWidth),
@@ -49,6 +52,8 @@ final class DecorationsLayoutManager: NSLayoutManager {
     var appearance: EditorAppearanceConfig?
     /// 当前行高亮对应的字符区间；由 CodeTextView 在光标 / 文本变化时刷新并触发重绘
     private var currentLineCharRange: NSRange?
+    /// 括号配对高亮的字符区间：由 CodeTextView 在光标 / 文本变化时刷新，空数组表示不画
+    var bracketMatchRanges: [NSRange] = []
 
     /// 跟随光标更新当前行区间；区间变化时整页重绘
     func updateCurrentLine(for textView: NSTextView) {
@@ -83,6 +88,10 @@ final class DecorationsLayoutManager: NSLayoutManager {
         if appearance.currentLine {
             drawCurrentLine(origin: origin, textView: textView, content: content,
                             color: palette.currentLine)
+        }
+        if !bracketMatchRanges.isEmpty {
+            drawBracketMatch(origin: origin, textView: textView, content: content,
+                             color: NSColor.controlAccentColor.withAlphaComponent(0.2))
         }
         if appearance.indentGuides {
             drawIndentGuides(indentWidth: appearance.indentWidth, glyphsToShow: glyphsToShow,
@@ -127,6 +136,28 @@ final class DecorationsLayoutManager: NSLayoutManager {
                               width: textView.bounds.width, height: fragment.height)
             color.setFill()
             rect.fill()
+        }
+    }
+
+    // MARK: - 括号配对
+
+    /// 配对括号的圆角底色：按字符所在字形的行片段与 x 位置绘制，左右各让出 1pt
+    private func drawBracketMatch(origin: NSPoint, textView: NSTextView,
+                                  content: NSString, color: NSColor) {
+        guard let font = textView.font, numberOfGlyphs > 0 else { return }
+        let charWidth = ("0" as NSString).size(withAttributes: [.font: font]).width
+        color.setFill()
+        for range in bracketMatchRanges {
+            guard range.location >= 0, range.length > 0,
+                  NSMaxRange(range) <= content.length else { continue }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            guard glyphs.location != NSNotFound, glyphs.length > 0 else { continue }
+            let glyphIndex = min(glyphs.location, numberOfGlyphs - 1)
+            let fragment = lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+            let x = location(forGlyphAt: glyphIndex).x
+            let rect = NSRect(x: origin.x + x - 1, y: origin.y + fragment.minY,
+                              width: max(charWidth, 2) + 2, height: fragment.height)
+            NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
         }
     }
 
@@ -274,6 +305,14 @@ final class LiteTextView: NSTextView {
     var onAppearanceChanged: (() -> Void)?
     /// 多光标：除主光标（selectedRange）外的额外插入点（字符偏移，升序）
     var extraCursors: [Int] = []
+    /// 批量设置额外光标时的条数上限（全选所有匹配）：再多的光标没有批量编辑价值，
+    /// 且每次输入都会退化成整篇重排
+    static let extraCursorLimit = 1000
+    /// 光标撤销快照的条数上限：超出丢弃最旧的一条
+    static let cursorUndoLimit = 50
+    /// 光标动作的撤销快照栈：只记额外光标的增减，不回写正文（KTD4）。
+    /// 只在用户入口登记（Cmd+单击追加 / 全选所有匹配 / Esc 清除），鼠标点击、正文改动等隐式清理不登记
+    private(set) var cursorUndoStack: [[Int]] = []
     /// 批量编辑进行中：此时正文变化由多光标自己发起，不清掉光标组
     var isPerformingMultiCursorEdit = false
     /// 成为第一响应者时的回调（参考栏据此把自己提升为主编辑区）
@@ -369,6 +408,109 @@ final class LiteTextView: NSTextView {
         insertText(IndentRules.unit(width: settings.indentWidth,
                                     insertSpaces: settings.insertSpacesForTab),
                    replacementRange: selectedRange())
+    }
+
+    // MARK: - 光标撤销（R3）
+
+    /// 登记一次光标快照：只压旧值，不注册到文本撤销栈（KTD4：光标是视图状态，不与正文共用撤销栈）
+    func pushCursorUndoSnapshot() {
+        cursorUndoStack.append(extraCursors)
+        if cursorUndoStack.count > LiteTextView.cursorUndoLimit {
+            cursorUndoStack.removeFirst(cursorUndoStack.count - LiteTextView.cursorUndoLimit)
+        }
+    }
+
+    /// 撤销上一次光标动作（Cmd+U）：弹栈恢复额外光标；栈空时只响提示音。
+    /// 快照里的偏移按当前正文长度夹取并去掉主光标位置：快照之后正文可能已被删短，
+    /// 越界偏移会在随后输入时落进 setSelectedRange 而抛异常
+    func undoLastCursorAction() {
+        guard let snapshot = cursorUndoStack.popLast() else {
+            NSSound.beep()
+            return
+        }
+        let length = (string as NSString).length
+        let caret = selectedRange().location
+        extraCursors = Array(Set(snapshot
+            .map { min(max($0, 0), length) }
+            .filter { $0 != caret })
+            .sorted())
+        needsDisplay = true
+    }
+
+    /// 清空光标撤销栈：整串正文替换后旧快照的偏移已失效
+    func clearCursorUndoStack() {
+        cursorUndoStack.removeAll()
+    }
+
+    // MARK: - 自动闭合（R4）
+
+    /// 自动闭合括号与引号：单光标输入开括号时补上配对字符，输入闭括号时跳过已有的那一个。
+    /// 返回 true 表示这次输入已被处理。入口是 MultiCursorTextView 两个 insertText 覆写的单光标分支
+    /// （单参数键绑定入口与系统两参数入口都要覆盖，KTD10）；组字、多光标批量输入与非零选区不触发
+    func handleAutoPair(_ text: String) -> Bool {
+        guard AppSettings.shared.autoCloseBrackets,
+              !hasMarkedText(),
+              extraCursors.isEmpty,
+              selectedRange().length == 0,
+              text.count == 1,
+              let typed = text.first else { return false }
+
+        let nsText = string as NSString
+        let caret = min(selectedRange().location, nsText.length)
+        let left = character(before: caret, in: nsText)
+
+        // 先判闭括号跳过：否则输入第二个引号时会走下面的补全分支，在已有的 `""` 之间再补一对
+        if AutoPair.isClosing(typed),
+           caret < nsText.length,
+           let right = character(at: caret, in: nsText),
+           right == typed,
+           let left, AutoPair.closing(for: left) == typed {
+            setSelectedRange(NSRange(location: caret + 1, length: 0))
+            return true
+        }
+
+        guard let closer = AutoPair.closing(for: typed) else { return false }
+        let context = AutoPairContext(
+            left: left,
+            right: caret < nsText.length ? character(at: caret, in: nsText) : nil,
+            atLineStart: isLineStart(caret, in: nsText),
+            atLineEnd: isLineEnd(caret, in: nsText))
+        guard AutoPair.shouldAutoClose(opener: typed, context: context) else { return false }
+
+        // 写入走 insertText 撤销协议：一次 Cmd+Z 可整体回退（与普通输入同一路径）
+        super.insertText(String([typed, closer]), replacementRange: selectedRange())
+        setSelectedRange(NSRange(location: caret + 1, length: 0))
+        return true
+    }
+
+    /// 取 UTF-16 偏移前一个字符（按组合字符整体取，不拆开代理对）
+    private func character(before offset: Int, in nsText: NSString) -> Character? {
+        guard offset > 0, offset <= nsText.length else { return nil }
+        let range = nsText.rangeOfComposedCharacterSequence(at: offset - 1)
+        guard range.location != NSNotFound, NSMaxRange(range) <= nsText.length else { return nil }
+        return Character(nsText.substring(with: range))
+    }
+
+    /// 取 UTF-16 偏移处的一个字符（按组合字符整体取，不拆开代理对）
+    private func character(at offset: Int, in nsText: NSString) -> Character? {
+        guard offset >= 0, offset < nsText.length else { return nil }
+        let range = nsText.rangeOfComposedCharacterSequence(at: offset)
+        guard range.location != NSNotFound, NSMaxRange(range) <= nsText.length else { return nil }
+        return Character(nsText.substring(with: range))
+    }
+
+    /// 光标是否位于行首（上一单元是换行符）
+    private func isLineStart(_ caret: Int, in nsText: NSString) -> Bool {
+        guard caret > 0 else { return true }
+        let before = nsText.character(at: caret - 1)
+        return before == 0x0A || before == 0x0D
+    }
+
+    /// 光标是否位于行尾（下一单元是换行符或已到正文末尾）
+    private func isLineEnd(_ caret: Int, in nsText: NSString) -> Bool {
+        guard caret < nsText.length else { return true }
+        let after = nsText.character(at: caret)
+        return after == 0x0A || after == 0x0D
     }
 
     /// 光标所在行的行首空白与光标之前的行内文本：行中回车按行首空白继承、不引入行内空格，

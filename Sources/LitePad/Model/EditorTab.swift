@@ -131,10 +131,45 @@ enum FindEngine {
         return beforeOK && afterOK
     }
 
-    private static func isWordChar(at index: Int, in nsText: NSString) -> Bool {
+    /// 词字符判定：非 CJK 标量且属于字母数字（不含下划线）。
+    /// 查找的全词判定、U3 的取词与 U12 的补全切词共用这一份口径，不再各写一套
+    static func isWordChar(at index: Int, in nsText: NSString) -> Bool {
         // 按码点判定，避免 UTF-16 单元拆开代理对；孤立代理单元与 NUL 直接视为非词字符
         guard let scalar = Unicode.Scalar(nsText.character(at: index)) else { return false }
         return !DocumentStats.isCJKScalar(scalar) && CharacterSet.alphanumerics.contains(scalar)
+    }
+
+    /// 光标处（或紧贴词尾）所在词的范围：向左右按词字符扫描，判定复用同类型的 isWordChar。
+    /// 越界或两侧都不是词字符时返回 nil（词字符都是 BMP 字符，按 UTF-16 单元扫描与按码点等价）
+    static func wordRange(at offset: Int, in nsText: NSString) -> NSRange? {
+        guard offset >= 0, offset <= nsText.length else { return nil }
+        // 光标落在词后一位时按左侧的词取（Cmd+单击 之后常见的位置）
+        var anchor = offset
+        if anchor >= nsText.length, anchor > 0 {
+            anchor -= 1
+        }
+        // 光标右边不是词字符时再看左边一位
+        if !(anchor < nsText.length && isWordChar(at: anchor, in: nsText)) {
+            let left = offset - 1
+            guard left >= 0, left < nsText.length, isWordChar(at: left, in: nsText) else { return nil }
+            anchor = left
+        }
+        var start = anchor
+        while start > 0, isWordChar(at: start - 1, in: nsText) { start -= 1 }
+        var end = anchor + 1
+        while end < nsText.length, isWordChar(at: end, in: nsText) { end += 1 }
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// 某个词在全文中的所有出现：查找面板打开且查询串正好是这个词时，直接复用面板已过滤的匹配
+    /// （正则 / 全词 / 大小写口径与用户当前查找一致）；否则按区分大小写的全词字面匹配现算
+    static func occurrenceRanges(forWord word: String, in text: String,
+                                 findState: FindState?) -> [NSRange] {
+        if let findState, findState.query == word {
+            return findState.matches
+        }
+        let state = FindState(query: word, useRegex: false, caseSensitive: true, wholeWord: true)
+        return matches(for: state, in: text)
     }
 }
 
@@ -206,6 +241,10 @@ struct EditorBridge {
     /// 折叠当前块 / 展开全部折叠
     var toggleFold: (() -> Void)?
     var unfoldAll: (() -> Void)?
+    /// 批量设置额外光标（全选所有匹配）：参数是额外光标的字符偏移
+    var setExtraCursors: (([Int]) -> Void)?
+    /// 撤销上一次光标动作（追加 / 批量追加额外光标）
+    var undoCursor: (() -> Void)?
 }
 
 /// 单个标签页对应的文档状态
@@ -217,7 +256,10 @@ final class EditorTab: ObservableObject, Identifiable {
     let untitledTitle: String?
 
     @Published var text: String {
-        didSet { refreshDirty() }
+        didSet {
+            textRevision &+= 1
+            refreshDirty()
+        }
     }
     @Published private(set) var savedText: String
     @Published private(set) var fileURL: URL?
@@ -257,6 +299,23 @@ final class EditorTab: ObservableObject, Identifiable {
 
     var displayName: String {
         fileURL?.lastPathComponent ?? untitledTitle ?? L10n.t("未命名")
+    }
+
+    /// 正文修订号：混合换行检测的缓存判据。正文一变就自增，避免状态栏因光标移动等无关刷新
+    /// 反复整篇扫描
+    private var textRevision = 0
+    /// 混合换行检测结果缓存：正文没变时直接复用，扫描只在正文变化后发生一次
+    private var mixedLineEndingsCache: (revision: Int, value: Bool)?
+
+    /// 正文是否混用了多种换行符（R8）：只读检测，不改写正文；
+    /// 依赖 `@Published var text` 的变化通知驱动状态栏重算，不新增发布字段
+    var hasMixedLineEndings: Bool {
+        if let cache = mixedLineEndingsCache, cache.revision == textRevision {
+            return cache.value
+        }
+        let value = LineEndingDetector.kinds(in: text).count > 1
+        mixedLineEndingsCache = (textRevision, value)
+        return value
     }
 
     /// 未指定编码 / 换行符时取全局设置的默认值；语法按扩展名检测，无文件时取默认语法设置。

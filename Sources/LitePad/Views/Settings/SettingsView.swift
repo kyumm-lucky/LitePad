@@ -621,6 +621,9 @@ private struct AppearanceSettingsPane: View {
                 SettingsSwitchRow(title: L10n.t("连字"),
                                   note: L10n.t("为 Fira Code 这类字体启用 → ≠ ≥ 的连字替换。"),
                                   isOn: $settings.ligaturesEnabled)
+                SettingsSwitchRow(title: L10n.t("拼写检查"),
+                                  note: L10n.t("用系统拼写检查标出可疑拼写；对代码与标记同样生效。"),
+                                  isOn: $settings.spellCheckEnabled)
                 SettingsRow(L10n.t("行高")) {
                     HStack(spacing: SettingsMetrics.controlSpacing) {
                         TextField("", value: $settings.lineHeightMultiple,
@@ -755,6 +758,9 @@ private struct WindowSettingsPane: View {
                 SettingsSwitchRow(title: L10n.t("当前行高亮"),
                                   note: L10n.t("用背景色标出光标所在行。"),
                                   isOn: $settings.highlightCurrentLine)
+                SettingsSwitchRow(title: L10n.t("自动闭合括号与引号"),
+                                  note: L10n.t("输入开括号与引号时自动补上配对字符；输入闭括号时跳过已有的那一个。"),
+                                  isOn: $settings.autoCloseBrackets)
             }
 
             SettingsGroup(L10n.t("缩进与换行")) {

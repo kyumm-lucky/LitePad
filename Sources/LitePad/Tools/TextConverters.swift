@@ -388,3 +388,35 @@ enum Base64Converter {
         return .success(decoded)
     }
 }
+
+/// Unicode 规范化形式（R11）：规范 / 兼容 × 组合 / 分解 四档
+enum UnicodeNormalizationForm: String, CaseIterable, Identifiable {
+    case nfc
+    case nfd
+    case nfkc
+    case nfkd
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .nfc: return L10n.t("NFC（组合）")
+        case .nfd: return L10n.t("NFD（分解）")
+        case .nfkc: return L10n.t("NFKC（兼容组合）")
+        case .nfkd: return L10n.t("NFKD（兼容分解）")
+        }
+    }
+}
+
+/// Unicode 规范化：四种形式分别对应 Foundation 的四个映射方法。
+/// 纯函数，非法串（孤立代理等）按 Foundation 原样返回，不崩溃
+enum UnicodeNormalizer {
+    static func normalize(_ text: String, form: UnicodeNormalizationForm) -> String {
+        switch form {
+        case .nfc: return text.precomposedStringWithCanonicalMapping
+        case .nfd: return text.decomposedStringWithCanonicalMapping
+        case .nfkc: return text.precomposedStringWithCompatibilityMapping
+        case .nfkd: return text.decomposedStringWithCompatibilityMapping
+        }
+    }
+}

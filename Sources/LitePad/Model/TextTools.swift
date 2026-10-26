@@ -19,6 +19,7 @@ enum TextToolKind: String, CaseIterable, Identifiable {
     case xml
     case sql
     case folderSearch
+    case unicodeNormalization
 
     var id: String { rawValue }
 
@@ -40,6 +41,7 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .xml: return L10n.t("XML 格式化")
         case .sql: return L10n.t("SQL 格式化")
         case .folderSearch: return L10n.t("文件夹搜索")
+        case .unicodeNormalization: return L10n.t("Unicode 规范化")
         }
     }
 
@@ -61,6 +63,7 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         case .xml: return "chevron.left.chevron.right"
         case .sql: return "cylinder"
         case .folderSearch: return "folder"
+        case .unicodeNormalization: return "textformat.abc"
         }
     }
 
@@ -84,7 +87,7 @@ enum TextToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .unicode, .ascii, .url, .base64, .json, .diff, .timestamp, .html, .xml, .sql:
             return true
-        case .lines, .hash, .uuid, .regex, .columnNumbers, .folderSearch:
+        case .lines, .hash, .uuid, .regex, .columnNumbers, .folderSearch, .unicodeNormalization:
             return false
         }
     }
@@ -116,6 +119,8 @@ final class TextToolsState: ObservableObject {
     @Published var base64URLSafe = false
     /// JSON：格式化时的缩进档位
     @Published var jsonIndent: JSONIndent = .twoSpaces
+    /// Unicode 规范化：四档形式（默认 NFC）
+    @Published var normalizationForm: UnicodeNormalizationForm = .nfc
 
     // MARK: - 哈希 / UUID / 时间戳 / HTML 实体
 
@@ -329,6 +334,8 @@ final class TextToolsState: ObservableObject {
             outcome = direction == .encode ? SQLFormatter.pretty(input) : SQLFormatter.compact(input)
         case .folderSearch:
             return
+        case .unicodeNormalization:
+            outcome = .success(UnicodeNormalizer.normalize(input, form: normalizationForm))
         case .diff:
             return
         }

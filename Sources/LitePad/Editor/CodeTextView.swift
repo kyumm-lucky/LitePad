@@ -55,7 +55,7 @@ struct CodeTextView: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
+        textView.isContinuousSpellCheckingEnabled = AppSettings.shared.spellCheckEnabled
         textView.isGrammarCheckingEnabled = false
 
         let scrollView = NSScrollView()
@@ -172,6 +172,12 @@ struct CodeTextView: NSViewRepresentable {
             },
             unfoldAll: { [weak coordinator = context.coordinator] in
                 coordinator?.tab.clearFolds()
+            },
+            setExtraCursors: { [weak textView] positions in
+                textView?.setExtraCursors(positions)
+            },
+            undoCursor: { [weak textView] in
+                textView?.undoLastCursorAction()
             }
         )
 
@@ -256,6 +262,7 @@ struct CodeTextView: NSViewRepresentable {
             // 这条赋值是外部改动重载与模型侧改写的落点，赋值前先清空撤销栈是唯一可行的口径
             textView.undoManager?.removeAllActions()
             (textView as? LiteTextView)?.clearExtraCursors()
+            (textView as? LiteTextView)?.clearCursorUndoStack()
             let selection = textView.selectedRanges.compactMap { $0 as? NSRange }
             textView.string = tab.text
             // 这条赋值不触发 textDidChange，正文修订号要在这里手动推一格
@@ -273,6 +280,8 @@ struct CodeTextView: NSViewRepresentable {
             textView.enclosingScrollView?.verticalRulerView?.needsDisplay = true
             // 整串重写会清空 layoutManager 临时属性，重置高亮快照让下方按新状态重建
             context.coordinator.appliedHighlight = HighlightSnapshot()
+            // 括号配对高亮同样按新正文重算：旧区间可能已落到正文之外
+            context.coordinator.updateBracketMatch(textView: textView)
         } else if languageChanged {
             context.coordinator.highlightedLanguage = tab.language
             if !tab.isLargeDocument {
@@ -339,6 +348,11 @@ struct CodeTextView: NSViewRepresentable {
                     storage.addAttribute(.font, value: font,
                                          range: NSRange(location: 0, length: storage.length))
                 }
+            }
+
+            // 拼写检查（R1）：设置页开关切换后即时生效，关闭时系统拼写标记立即消失
+            if textView.isContinuousSpellCheckingEnabled != config.spellCheck {
+                textView.isContinuousSpellCheckingEnabled = config.spellCheck
             }
 
             // 段落样式：行高倍数 / 自动换行缩进 / 书写方向 / 制表位
@@ -484,6 +498,7 @@ struct CodeTextView: NSViewRepresentable {
                 if let decorations = textView.layoutManager as? DecorationsLayoutManager {
                     decorations.updateCurrentLine(for: textView)
                 }
+                updateBracketMatch(textView: textView)
                 // 外部改写（撤销、重载、模型侧清理）后额外光标的位置不再对应正文，直接收起
                 if let lite = textView as? LiteTextView, !lite.isPerformingMultiCursorEdit {
                     lite.clearExtraCursors()
@@ -501,6 +516,7 @@ struct CodeTextView: NSViewRepresentable {
             if let decorations = textView.layoutManager as? DecorationsLayoutManager {
                 decorations.updateCurrentLine(for: textView)
             }
+            updateBracketMatch(textView: textView)
             // 选中词高亮跟随选区；组字期间视图里是 marked text，等组字结束再重建
             if !textView.hasMarkedText() {
                 applyHighlightsIfNeeded(textView: textView)
@@ -513,6 +529,29 @@ struct CodeTextView: NSViewRepresentable {
             tab.updateStats(DocumentStats.compute(text: textView.string,
                                                   caretOffset: selection.location,
                                                   selectionRange: selection))
+        }
+
+        /// 括号配对高亮（R5）：大文件模式不扫描（实现约束），其余按光标位置重算，
+        /// 只在与上次结果不同时重绘，避免逐键触发整片重画。
+        /// R5 同时覆盖「选区落在括号上」：选区起点不在括号上时再看选区终点
+        func updateBracketMatch(textView: NSTextView) {
+            guard let decorations = textView.layoutManager as? DecorationsLayoutManager else { return }
+            let ranges: [NSRange]
+            if tab.isLargeDocument {
+                ranges = []
+            } else {
+                let nsText = textView.string as NSString
+                let selection = textView.selectedRange()
+                var matched = BracketMatcher.matches(in: nsText, caret: selection.location)
+                if matched.isEmpty, selection.length > 0 {
+                    matched = BracketMatcher.matches(in: nsText,
+                                                     caret: NSMaxRange(selection) - 1)
+                }
+                ranges = matched
+            }
+            guard decorations.bracketMatchRanges != ranges else { return }
+            decorations.bracketMatchRanges = ranges
+            textView.needsDisplay = true
         }
 
         /// 按当前查找状态与选区重算高亮快照，有变化才重建；两者写同一层临时背景属性，
@@ -814,17 +853,18 @@ private func applyHighlights(textView: NSTextView, old: HighlightSnapshot, new: 
         layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
     }
     if let selection = new.selection {
-        // 与当前选区一起看：比查找高亮更淡，出现与选中词区分得开
+        // 与当前选区一起看：比查找高亮更淡，出现与选中词区分得开。
+        // 用 add 而不是 set：拼写检查的状态也存在临时属性里（R1），set 会把该区间的临时属性整份替换掉
         let color = NSColor.controlAccentColor.withAlphaComponent(0.22)
         for range in selection.ranges {
-            layoutManager.setTemporaryAttributes([.backgroundColor: color], forCharacterRange: range)
+            layoutManager.addTemporaryAttributes([.backgroundColor: color], forCharacterRange: range)
         }
     }
     guard let state = new.find, !state.matches.isEmpty else { return }
     let dimmed = NSColor.controlAccentColor.withAlphaComponent(0.25)
     let active = NSColor.controlAccentColor.withAlphaComponent(0.45)
     for (index, range) in state.matches.enumerated() {
-        layoutManager.setTemporaryAttributes(
+        layoutManager.addTemporaryAttributes(
             [.backgroundColor: index == state.current ? active : dimmed],
             forCharacterRange: range)
     }

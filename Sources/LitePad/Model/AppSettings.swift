@@ -216,6 +216,14 @@ final class AppSettings: ObservableObject {
     @Published var ligaturesEnabled: Bool {
         didSet { defaults.set(ligaturesEnabled, forKey: "settings.ligatures") }
     }
+    /// 编辑区用系统拼写检查标出可疑拼写；默认关闭，对代码与标记同样生效（不按语言区分）
+    @Published var spellCheckEnabled: Bool {
+        didSet { defaults.set(spellCheckEnabled, forKey: "settings.spellCheck") }
+    }
+    /// 输入开括号 / 引号时自动补上配对字符；默认开启，与主流编辑器一致
+    @Published var autoCloseBrackets: Bool {
+        didSet { defaults.set(autoCloseBrackets, forKey: "settings.autoCloseBrackets") }
+    }
     /// 行高倍数，应用侧收敛到 0.5 - 5
     @Published var lineHeightMultiple: Double {
         didSet { defaults.set(lineHeightMultiple, forKey: "settings.lineHeight") }
@@ -426,6 +434,8 @@ final class AppSettings: ObservableObject {
         editorFontName = defaults.string(forKey: "settings.fontName") ?? ""
         editorFontSize = defaults.object(forKey: "settings.fontSize") as? Double ?? Self.defaultEditorFontSize
         ligaturesEnabled = defaults.object(forKey: "settings.ligatures") as? Bool ?? false
+        spellCheckEnabled = defaults.object(forKey: "settings.spellCheck") as? Bool ?? false
+        autoCloseBrackets = defaults.object(forKey: "settings.autoCloseBrackets") as? Bool ?? true
         lineHeightMultiple = defaults.object(forKey: "settings.lineHeight") as? Double ?? 1.0
         appearanceMode = defaults.string(forKey: "settings.appearance")
             .flatMap(AppearanceMode.init(rawValue:)) ?? .system

@@ -30,6 +30,9 @@ final class EditorSession: ObservableObject {
     @Published var activeTool: TextToolKind?
     /// 主窗口左侧设置抽屉是否展开
     @Published var isSettingsPresented = false
+    /// 专注模式：隐藏标签栏、状态栏、侧栏与工具抽屉，只保留编辑区（含参考栏）。
+    /// 会话级临时视图状态，不写入 UserDefaults、不进文档模型（KTD9）
+    @Published var isFocusMode = false
     /// 是否有文件正被拖在窗口上（驱动接收提示）：编辑区由编辑视图在 AppKit 层上报，
     /// 标签栏与状态栏由主栏的投放目标上报。只经 `setFileDropTargeted` 写
     @Published private(set) var isFileDropTargeted = false
@@ -553,6 +556,50 @@ final class EditorSession: ObservableObject {
         tab.navigateMatch(delta)
     }
 
+    /// 用当前选区作为查找内容（Cmd+E，R7）：以当前查找状态为基准覆写查询串并重算匹配，
+    /// 面板未打开时由 applyFindState 建立状态并显示面板；无选区或选区为空时只发出提示音
+    func useSelectionForFind() {
+        guard let tab = selectedTab,
+              let source = tab.bridge.textSource?(),
+              !source.selection.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        // 面板已打开时保留用户填好的替换串与选项，只换查询（KTD3 同一口径：就近复用现有状态）
+        var state = tab.findState ?? tab.lastFind ?? FindState()
+        state.query = FindSyntax.escapingRealNewlines(source.selection)
+        state.useRegex = false
+        state.wholeWord = false
+        state.current = 0
+        tab.applyFindState(state)
+    }
+
+    /// 全选所有匹配（Cmd+Shift+L，R2）：把当前词在全文的所有出现转成额外光标。
+    /// 有选区时取选区文本，无选区时取光标处词；数据源优先用查找面板已算好的匹配（KTD3）。
+    /// 大文件模式不做全文扫描（实现约束），无词可取或无匹配时不做任何操作
+    func selectAllMatches() {
+        guard let tab = selectedTab, !tab.isLargeDocument else { return }
+        let source = tab.bridge.textSource?() ?? (selection: "", fullText: tab.text)
+        let word: String
+        if source.selection.isEmpty {
+            let nsText = source.fullText as NSString
+            guard let range = FindEngine.wordRange(at: tab.stats.caretOffset, in: nsText) else { return }
+            word = nsText.substring(with: range)
+        } else {
+            word = source.selection
+        }
+        guard !word.isEmpty else { return }
+        let ranges = FindEngine.occurrenceRanges(forWord: word, in: source.fullText,
+                                                 findState: tab.findState)
+        guard !ranges.isEmpty else { return }
+        tab.bridge.setExtraCursors?(ranges.map(\.location))
+    }
+
+    /// 撤销上一次光标动作（Cmd+U，R3）：走视图的独立快照栈，与正文撤销栈互不影响
+    func undoCursor() {
+        selectedTab?.bridge.undoCursor?()
+    }
+
     /// 打开跨文件搜索结果并跳到对应行：标签视图可能刚刚创建，推迟一拍再定位
     func openSearchResult(_ result: FolderSearchResult) {
         open(url: result.url)
@@ -561,6 +608,59 @@ final class EditorSession: ObservableObject {
             tab.bridge.goToLine?(result.line)
         }
     }
+
+    // MARK: - 文件动作
+
+    /// 统一全文换行符（R9）：把正文里的换行统一为当前标签的行尾设置。
+    /// 归一复用 `LineEnding.applying(to:)`，整串替换复用 `replaceWholeText(_:in:)`（KTD6）：
+    /// 有编辑视图时走撤销协议（一次 Cmd+Z 可回退），视图已拆除时直接改模型正文
+    func unifyLineEndings() {
+        guard let tab = selectedTab else { return }
+        let newText = tab.lineEnding.applying(to: tab.text)
+        guard newText != tab.text else {
+            NSSound.beep()
+            return
+        }
+        guard replaceWholeText(newText, in: tab) else {
+            NSSound.beep()
+            return
+        }
+    }
+
+    /// 文件摘要弹窗（R10）：完整路径、磁盘修改时间、字节数、字符数、词数、行数。
+    /// 字节数按标签当前的保存编码现算，不放进 DocumentStats（那份统计在逐键重算的热路径上）
+    func showFileSummary() {
+        guard let tab = selectedTab else { return }
+        let byteCount: String
+        var encodingNote = ""
+        if let data = tab.encoding.encode(tab.text) {
+            byteCount = "\(data.count)"
+        } else {
+            // 编码无法表示正文时不给假数字：明确标出无法计算，并在弹窗末行说明原因
+            byteCount = "-"
+            encodingNote = "\n" + L10n.t("当前编码无法表示全部字符")
+        }
+        let modified = EditorTab.fileDate(at: tab.fileURL)
+            .map(Self.summaryDateFormatter.string(from:)) ?? "-"
+        let lines = [
+            L10n.format("路径：%@", tab.fileURL?.path ?? L10n.t("未保存")),
+            L10n.format("修改时间：%@", modified),
+            L10n.format("字节数：%@", byteCount),
+            L10n.format("字符数：%d", tab.stats.characterCount),
+            L10n.format("词数：%d", tab.stats.wordCount),
+            L10n.format("行数：%d", tab.stats.totalLines)
+        ]
+        presentNotice(title: L10n.t("文件摘要"),
+                      message: lines.joined(separator: "\n") + encodingNote)
+    }
+
+    /// 文件摘要里修改时间的格式（与「插入日期时间」同一口径）
+    private static let summaryDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
 
     // MARK: - 文件夹工作区
 
@@ -609,6 +709,16 @@ final class EditorSession: ObservableObject {
 
     /// 关闭主窗口设置抽屉
     func closeSettings() {
+        isSettingsPresented = false
+    }
+
+    /// 切换专注模式（R12）：进入时收起工具抽屉、下拉面板与设置抽屉，标签与参考栏状态不动
+    func toggleFocusMode() {
+        isFocusMode.toggle()
+        guard isFocusMode else { return }
+        activeTool = nil
+        expandedMenu = nil
+        hoveredPanelIndex = nil
         isSettingsPresented = false
     }
 

@@ -330,6 +330,42 @@ enum LineEnding: String, CaseIterable, Identifiable {
     }
 }
 
+/// 正文里出现过的换行符种类；只读扫描，不改写正文（KTD5）
+enum LineEndingDetector {
+    /// 扫描上限（UTF-16 单元）：该阈值只用于检测，与 `EditorTab.isLargeDocument` 的 2 MiB（跳过高亮）用途不同
+    static let scanLimit = 8 * 1024 * 1024
+
+    /// 按 UTF-16 单元扫描正文里出现过的换行符：先判 `\r`，下一单元是 `\n` 时记 `.crlf` 并跳过两单元，
+    /// 单独 `\r` 记 `.cr`，`\n` 记 `.lf`。不能按 Swift `Character` 遍历——`\r\n` 在 Swift 里是一个字符
+    static func kinds(in text: String) -> Set<LineEnding> {
+        let nsText = text as NSString
+        let length = nsText.length
+        guard length <= scanLimit else { return [] }
+        var kinds: Set<LineEnding> = []
+        var index = 0
+        while index < length {
+            switch nsText.character(at: index) {
+            case 0x0D:
+                if index + 1 < length, nsText.character(at: index + 1) == 0x0A {
+                    kinds.insert(.crlf)
+                    index += 2
+                } else {
+                    kinds.insert(.cr)
+                    index += 1
+                }
+            case 0x0A:
+                kinds.insert(.lf)
+                index += 1
+            default:
+                index += 1
+            }
+            // 三种换行都已出现时提前收手，混合与否已经确定
+            if kinds.count > 1 { return kinds }
+        }
+        return kinds
+    }
+}
+
 /// 显式保存前的两项可选正文清理：删除行尾空白、补齐末尾换行。
 /// 两项都不是保义操作（Markdown 的行尾双空格是硬换行、补丁文件的空行有意义），
 /// 因此只在显式保存时执行、由设置按语法排除，且由设置控制默认关闭。
