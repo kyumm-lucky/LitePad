@@ -1,94 +1,49 @@
 import SwiftUI
 
 /// 保存时清理的按语法排除表：勾中的语法在保存时保留原样
-/// （Markdown 的行尾双空格是硬换行、补丁文件的空行有意义，这类格式不能删行尾空白）
-struct SaveCleanupExclusionList: View {
+/// （Markdown 的行尾双空格是硬换行、补丁文件的空行有意义，这类格式不能删行尾空白）。
+/// 外观与编码优先级表同一套分组卡片与复选行，逻辑不变
+struct SaveCleanupExclusionSheet: View {
+    let onClose: () -> Void
     @ObservedObject private var settings = AppSettings.shared
-    @StateObject private var hover = SettingsIndexHoverState()
+    private let languages = LanguageDefinition.all
 
-    var body: some View {
-        let languages = LanguageDefinition.all
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 7) {
-                Image(systemName: "checkmark.square")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(InterfaceStyle.accent)
-                Text(L10n.t("不清理这些语法"))
-                    .font(.system(size: 11, weight: .semibold))
-                Spacer(minLength: 0)
-                Text("\(settings.saveCleanupExcludedLanguageIDs.count)/\(languages.count)")
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
-                    .foregroundStyle(InterfaceStyle.muted)
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
-
-            Rectangle()
-                .fill(InterfaceStyle.border)
-                .frame(height: 1)
-                .padding(.horizontal, 8)
-
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 2) {
-                    ForEach(languages.indices, id: \.self) { index in
-                        let language = languages[index]
-                        // 行的画法与无障碍语义共用这一个判定：两边各取一次会在同一帧里读出两种状态
-                        let excluded = settings.isSaveCleanupExcluded(language)
-                        Button {
-                            settings.setSaveCleanupExcluded(!excluded, for: language)
-                        } label: {
-                            row(language, index: index, excluded: excluded)
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hover.index = $0 ? index : nil }
-                        // 勾选状态只由一个图标符号的两种画法表达，VoiceOver 读不出来：
-                        // 按工程既有口径补上名称、状态与选中特征（与 LitePadToggle、LiquidSegmented 一致）
-                        .accessibilityLabel("\(language.displayName) \(language.extensions.joined(separator: " / "))")
-                        .accessibilityValue(excluded ? L10n.t("已排除") : L10n.t("未排除"))
-                        .accessibilityAddTraits(excluded ? [.isButton, .isSelected] : .isButton)
-                    }
-                }
-                .padding(6)
-            }
-        }
-        .frame(width: 300, height: 150, alignment: .topLeading)
-        .background(FrostedSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous)))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
-        )
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
     }
 
-    /// 一行语法：勾选框 + 语法名 + 归属的扩展名（落到该语法的文件都会受影响）
-    private func row(_ language: LanguageDefinition, index: Int, excluded: Bool) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: excluded ? "checkmark.square.fill" : "square")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(excluded ? InterfaceStyle.accent : InterfaceStyle.muted)
-            Text(language.displayName)
-                .font(.system(size: 11, weight: excluded ? .medium : .regular))
-                .foregroundStyle(excluded ? .primary : InterfaceStyle.muted)
-                .lineLimit(1)
-            Text(language.extensions.joined(separator: " / "))
-                .font(.system(size: 9))
-                .foregroundStyle(InterfaceStyle.muted)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L10n.t("勾选的语法在保存时保留原样；未勾选的语法会被清理。"))
+                .font(.system(size: 11))
+                .foregroundStyle(SettingsStyle.text2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                SettingsGroup(L10n.t("例外语法")) {
+                    ForEach(languages.indices, id: \.self) { index in
+                        let language = languages[index]
+                        SettingsCheckboxRow(title: language.displayName,
+                                            detail: language.extensions.joined(separator: " / "),
+                                            showsDivider: index > 0,
+                                            isOn: binding(for: language))
+                    }
+                }
+            }
+            .frame(height: 320)
+
+            HStack {
+                Spacer(minLength: 0)
+                SettingsAccentButton(title: L10n.t("完成"), isDefault: true) { onClose() }
+            }
         }
-        .frame(minHeight: 26)
-        .padding(.horizontal, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(excluded
-                      ? InterfaceStyle.accentSoft
-                      : (hover.index == index ? InterfaceStyle.raised : Color.clear))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(excluded ? InterfaceStyle.accentBorder : Color.clear, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
+        .padding(20)
+        .frame(width: 420)
+        .background(SettingsStyle.window)
+    }
+
+    private func binding(for language: LanguageDefinition) -> Binding<Bool> {
+        Binding(get: { settings.isSaveCleanupExcluded(language) },
+                set: { settings.setSaveCleanupExcluded($0, for: language) })
     }
 }

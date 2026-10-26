@@ -17,6 +17,18 @@ enum Motion {
     /// 时长要压住：拖到 0.3 秒以上，中途那几帧就会被看成"一块板在慢慢挪"
     static let liquid = Animation.spring(response: 0.27, dampingFraction: 0.74, blendDuration: 0.04)
 
+    /// 设置页换页：只换内容、不换宽度，不做横向位移——横移会像整块面板在晃。
+    /// 比工具抽屉快一档，节拍接近系统设置的换页
+    static let settingsPane = Animation.easeOut(duration: 0.18)
+
+    /// 设置页换页的进出：新页淡入 + 上移 4pt，旧页不参与动画（同一处内容直接替换）。
+    /// 减弱动态效果时只保留透明度过渡
+    static var settingsPaneTransition: AnyTransition {
+        guard !prefersReducedMotion else { return .opacity }
+        return .asymmetric(insertion: .opacity.combined(with: .offset(x: 0, y: 4)),
+                           removal: .identity)
+    }
+
     /// 系统「减弱动态效果」开关：开启后大幅位移一律退化为淡入淡出，缩放与推进照旧
     static var prefersReducedMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

@@ -506,5 +506,61 @@ enum L10n {
         "需要保留时在下方按语法排除。": "If you need to keep them, exclude the syntax below.",
         "高度": "Height",
         "默认从 1 开始编号": "Starts numbering at 1 by default",
+        // 设置页改版：分组标题、行说明、提示与附属表文案
+        "界面": "Interface",
+        "启动": "Launch",
+        "外部更改": "External Changes",
+        "字体": "Font",
+        "字号": "Size",
+        "主题": "Theme",
+        "窗口": "Window",
+        "显示": "Display",
+        "缩进与换行": "Indentation",
+        "状态栏": "Status Bar",
+        "新建文稿": "New Documents",
+        "编码探测": "Encoding",
+        "等宽字体": "Monospaced font",
+        "语法主题": "Syntax theme",
+        "顶栏与状态栏": "Top bar and status bar",
+        "编辑器透明度": "Editor opacity",
+        "窗口大小": "Window size",
+        "缩进宽度": "Indent width",
+        "自动换行缩进": "Wrap indent",
+        "额外滚动": "Extra scroll",
+        "书写方向": "Writing direction",
+        "行高": "Line height",
+        "自动保存": "Autosave",
+        "页面宽度": "Page width",
+        "列位置页面指示": "Page guide",
+        "没有可恢复的文稿时": "When there is nothing to restore",
+        "文稿被其他应用更改时": "When a document is changed by another app",
+        "例外语法": "Exceptions",
+        "编辑…": "Edit…",
+        "%d 种": "%d excluded",
+        "点": "pt",
+        "列": "columns",
+        "恢复上次的标签、选区与滚动位置。": "Restores tabs, selections, and scroll positions.",
+        "编辑已保存的文件时自动写盘；未标题文稿仍需手动保存。":
+            "Saves edited files automatically. Untitled documents still need a manual save.",
+        "只去空格与制表符；会破坏 Markdown 行尾双空格与补丁文件空行。":
+            "Removes spaces and tabs only. Breaks Markdown hard breaks and patch files.",
+        "在末尾补一个换行；补丁类文件以此为语义。":
+            "Adds one trailing newline. Patch files depend on its absence.",
+        "两项清理只在显式保存（含关闭标签与退出时的确认保存）前执行；自动保存不改动正文。":
+            "Cleanup runs only on an explicit save — including close and quit confirmations. Autosave never edits text.",
+        "为 Fira Code 这类字体启用 → ≠ ≥ 的连字替换。":
+            "Enables ligatures such as → ≠ ≥ for fonts like Fira Code.",
+        "显示空白与换行等不可见字符。": "Shows spaces, tabs, and line endings.",
+        "关闭时插入一个制表符，宽度按缩进宽度换算。":
+            "Off inserts a tab, measured with the indent width.",
+        "用背景色标出光标所在行。": "Highlights the line containing the caret.",
+        "在正文末尾保留一段可滚动空白。": "Adds scrollable space below the last line.",
+        "100% 时编辑区完全不透明。": "At 100% the editor is fully opaque.",
+        "只作用于代码与标记的高亮配色。": "Affects syntax highlighting only.",
+        "读取 HTML、XML 里的 charset 声明来决定解码。":
+            "Uses charset declarations in HTML and XML to pick a decoder.",
+        "无 BOM 的文件按顺序尝试解码。": "Files without a BOM are decoded in this order.",
+        "勾选的语法在保存时保留原样；未勾选的语法会被清理。":
+            "Checked syntaxes keep their text as-is on save; unchecked ones are cleaned.",
     ]
 }

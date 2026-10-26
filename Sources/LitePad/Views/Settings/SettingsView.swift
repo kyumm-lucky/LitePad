@@ -18,6 +18,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 页头副标题：承接原侧栏项的第二行文字，侧栏因此只留一行标签
     var subtitle: String {
         switch self {
         case .general: return L10n.t("启动与保存")
@@ -27,12 +28,13 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 侧栏图标：14 × 14、单色说明灰，不做彩色圆底
     var icon: String {
         switch self {
-        case .general: return "gearshape"
-        case .appearance: return "eyeglasses"
+        case .general: return "square.grid.2x2"
+        case .appearance: return "circle.lefthalf.filled"
         case .window: return "text.alignleft"
-        case .format: return "doc.plaintext"
+        case .format: return "doc.text"
         }
     }
 }
@@ -41,16 +43,27 @@ private final class SettingsNavigationState: ObservableObject {
     @Published var section: SettingsSection = .general
 }
 
+/// 内容滚动位置：页头底边只在内容滚起来之后才出现分隔线（与设计稿的 is-scrolled 一致）
+private final class SettingsScrollState: ObservableObject {
+    @Published var isScrolled = false
+}
+
 /// 主窗口左侧设置抽屉：分组导航固定在左侧，具体选项在右侧滚动查看。
+/// 视觉口径为 macOS 系统设置式极简：纯窗口底 + 一层分组卡片 + 发丝线 + 单一强调色
 struct SettingsView: View {
     static let drawerWidth: CGFloat = 660
     /// 详情区坐标空间：下拉锚点与弹层同用一处，弹层才能按锚点摆对位置
     static let detailCoordinateSpace = "settingsDetail"
+    /// 内容滚动区的坐标空间：只为测量「滚起来没有」
+    private static let scrollCoordinateSpace = "settingsScroll"
 
     let onClose: () -> Void
     @ObservedObject private var settings = AppSettings.shared
     @StateObject private var navigation = SettingsNavigationState()
     @StateObject private var popups = SettingsPopupState(space: SettingsView.detailCoordinateSpace)
+    @StateObject private var closeHover = InterfaceHoverState()
+    @StateObject private var sidebarHover = SettingsIndexHoverState()
+    @StateObject private var scroll = SettingsScrollState()
 
     init(onClose: @escaping () -> Void = {}) {
         self.onClose = onClose
@@ -60,222 +73,200 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             sidebar
             Rectangle()
-                .fill(InterfaceStyle.border)
-                .frame(width: 1)
+                .fill(SettingsStyle.separator)
+                .frame(width: 0.5)
             detail
         }
         .frame(width: Self.drawerWidth)
         .frame(maxHeight: .infinity)
-        .background(FrostedSurface(shape: RoundedRectangle(cornerRadius: 12, style: .continuous)))
+        .background(SettingsStyle.window)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(InterfaceStyle.frostedEdge, lineWidth: 1)
-        )
+        // 抽屉浮在编辑区上，只有浮层给阴影；不再做磨砂材质与边光高光
+        .shadow(color: SettingsStyle.drawerShadow, radius: 18, y: 4)
         .onChange(of: settings.appearanceMode) { _ in settings.applyAppearance() }
         // 换页时原页面连同按钮一起消失，弹层留在宿主顶层不会自己收，这里显式收掉
         .onChange(of: navigation.section) { _ in popups.dismiss() }
+        // 「启动动作」行随父开关隐藏时同理：触发按钮已经不在了，不能把弹层留在半空
+        .onChange(of: settings.restoreSessionOnLaunch) { _ in popups.dismiss() }
     }
+
+    // MARK: - 侧栏
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(InterfaceStyle.accent)
-                Text(L10n.t("设置"))
-                    .font(.system(size: 15, weight: .semibold))
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 18)
-            .padding(.bottom, 20)
+            Text(L10n.t("设置"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(SettingsStyle.text)
+                .padding(.horizontal, 8)
+                .padding(.top, 2)
+                .padding(.bottom, 16)
 
             Text(L10n.t("工作区配置"))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(InterfaceStyle.muted)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 8)
+                .font(.system(size: 11, weight: .semibold))
+                .kerning(0.4)
+                .foregroundStyle(SettingsStyle.text2)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
 
-            VStack(spacing: 4) {
-                ForEach(SettingsSection.allCases) { section in
-                    Button {
-                        withAnimation(Motion.control) {
-                            navigation.section = section
-                        }
-                    } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: section.icon)
-                                .font(.system(size: 12, weight: .medium))
-                                .frame(width: 18)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(section.title)
-                                    .font(.system(size: 12, weight: .medium))
-                                Text(section.subtitle)
-                                    .font(.system(size: 9))
-                                    .foregroundStyle(InterfaceStyle.muted)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .foregroundStyle(navigation.section == section ? InterfaceStyle.accent : Color.primary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(navigation.section == section
-                                      ? InterfaceStyle.accentSoft
-                                      : Color.clear)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(navigation.section == section
-                                              ? InterfaceStyle.accentBorder
-                                              : Color.clear,
-                                              lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
+            VStack(spacing: 2) {
+                ForEach(SettingsSection.allCases, id: \.self) { section in
+                    sidebarItem(section, index: index(of: section))
                 }
             }
-            .padding(.horizontal, 8)
 
             Spacer(minLength: 0)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text("LitePad")
                     .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(SettingsStyle.text)
                 Text(L10n.t("原生文本工作台"))
-                    .font(.system(size: 9))
-                    .foregroundStyle(InterfaceStyle.muted)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(SettingsStyle.text2)
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 18)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 2)
         }
-        .frame(width: 150)
+        .padding(.horizontal, 10)
+        .padding(.top, 14)
+        .padding(.bottom, 14)
+        .frame(width: SettingsMetrics.sidebarWidth)
         .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.black.opacity(0.12))
+        .background(SettingsStyle.sidebar)
     }
+
+    private func index(of section: SettingsSection) -> Int {
+        SettingsSection.allCases.firstIndex(of: section) ?? 0
+    }
+
+    private func sidebarItem(_ section: SettingsSection, index: Int) -> some View {
+        let isActive = navigation.section == section
+        return Button {
+            withAnimation(Motion.settingsPane) {
+                navigation.section = section
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: section.icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 14, height: 14)
+                    .foregroundStyle(SettingsStyle.text2)
+                Text(section.title)
+                    .font(.system(size: 13, weight: isActive ? .medium : .regular))
+                    .foregroundStyle(SettingsStyle.text)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: SettingsMetrics.sidebarItemHeight)
+            .background(
+                RoundedRectangle(cornerRadius: SettingsMetrics.sidebarItemRadius, style: .continuous)
+                    .fill(isActive
+                          ? SettingsStyle.selectionStrong
+                          : (sidebarHover.index == index ? SettingsStyle.selection : Color.clear))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .animation(Motion.control, value: sidebarHover.index)
+        .onHover { sidebarHover.index = $0 ? index : nil }
+        .accessibilityLabel(section.title)
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+    }
+
+    // MARK: - 详情
 
     private var detail: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(navigation.section.title)
-                        .font(.system(size: 18, weight: .semibold))
-                    Text(navigation.section.subtitle)
-                        .font(.system(size: 10))
-                        .foregroundStyle(InterfaceStyle.muted)
-                }
-                Spacer(minLength: 0)
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(Color.primary.opacity(0.08)))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help(L10n.t("关闭设置"))
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-
-            Rectangle()
-                .fill(InterfaceStyle.border)
-                .frame(height: 1)
+            header
 
             ScrollView(.vertical, showsIndicators: false) {
                 currentPane
-                    .padding(18)
+                    .padding(EdgeInsets(top: SettingsMetrics.contentTop,
+                                        leading: SettingsMetrics.contentSide,
+                                        bottom: SettingsMetrics.contentBottom,
+                                        trailing: SettingsMetrics.contentSide))
+                    // 首组距页头再多 6（设计稿 .group:first-child 的 margin-top）
+                    .padding(.top, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear
+                                .onAppear { syncScrolled(proxy.frame(in: .named(Self.scrollCoordinateSpace)).minY) }
+                                .onChange(of: proxy.frame(in: .named(Self.scrollCoordinateSpace)).minY) {
+                                    syncScrolled($0)
+                                }
+                        }
+                    )
+                    // 换页时整页替换：新页淡入 + 上移 4pt，旧页不参与动画
+                    .id(navigation.section)
+                    .transition(Motion.settingsPaneTransition)
             }
+            .coordinateSpace(name: Self.scrollCoordinateSpace)
         }
         .frame(maxHeight: .infinity)
         // 弹层挂在滚动视图之外：滚动内容裁不到它，页内顺序也压不住它
         .settingsPopupHost(popups)
     }
 
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(navigation.section.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(SettingsStyle.text)
+                Text(navigation.section.subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(SettingsStyle.text2)
+            }
+            Spacer(minLength: 0)
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(closeHover.isHovered ? SettingsStyle.text : SettingsStyle.text2)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle().fill(closeHover.isHovered ? SettingsStyle.selectionStrong : Color.clear)
+                    )
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .onHover { closeHover.isHovered = $0 }
+            .help(L10n.t("关闭设置"))
+            .accessibilityLabel(L10n.t("关闭设置"))
+        }
+        .padding(.leading, 20)
+        .padding(.trailing, 18)
+        .frame(height: SettingsMetrics.headerHeight)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(SettingsStyle.separator)
+                .frame(height: 0.5)
+                .opacity(scroll.isScrolled ? 1 : 0)
+        }
+    }
+
+    private func syncScrolled(_ minY: CGFloat) {
+        let scrolled = minY < -0.5
+        guard scrolled != scroll.isScrolled else { return }
+        scroll.isScrolled = scrolled
+    }
+
     @ViewBuilder
     private var currentPane: some View {
         switch navigation.section {
         case .general:
-            SettingsCard(title: L10n.t("启动与保存"),
-                         subtitle: L10n.t("控制工作区恢复、自动保存和外部文件变化"),
-                         icon: "arrow.clockwise") {
-                GeneralSettingsPane(popups: popups)
-            }
+            GeneralSettingsPane(popups: popups)
         case .appearance:
-            SettingsCard(title: L10n.t("字体与主题"),
-                         subtitle: L10n.t("调整代码阅读时的字体、语法配色和透明度"),
-                         icon: "eyeglasses") {
-                AppearanceSettingsPane()
-            }
+            AppearanceSettingsPane(popups: popups)
         case .window:
-            SettingsCard(title: L10n.t("编辑器布局"),
-                         subtitle: L10n.t("管理窗口尺寸、辅助标记、换行和状态栏"),
-                         icon: "text.alignleft") {
-                WindowSettingsPane()
-            }
+            WindowSettingsPane()
         case .format:
-            SettingsCard(title: L10n.t("编码与语法"),
-                         subtitle: L10n.t("设置新文稿的编码、行尾和默认语法"),
-                         icon: "doc.plaintext") {
-                FormatSettingsPane(popups: popups)
-            }
+            FormatSettingsPane(popups: popups)
         }
     }
 }
 
-private struct SettingsCard<Content: View>: View {
-    let title: String
-    let subtitle: String
-    let icon: String
-    @ViewBuilder let content: () -> Content
-
-    init(title: String,
-         subtitle: String,
-         icon: String,
-         @ViewBuilder content: @escaping () -> Content) {
-        self.title = title
-        self.subtitle = subtitle
-        self.icon = icon
-        self.content = content
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 9) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(InterfaceStyle.accent)
-                    .frame(width: 22, height: 22)
-                    .background(Circle().fill(InterfaceStyle.accentSoft))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(subtitle)
-                        .font(.system(size: 10))
-                        .foregroundStyle(InterfaceStyle.muted)
-                }
-            }
-
-            Rectangle()
-                .fill(InterfaceStyle.border)
-                .frame(height: 1)
-
-            content()
-        }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(InterfaceStyle.raised.opacity(0.28))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(InterfaceStyle.border, lineWidth: 1)
-        )
-    }
-}
+// MARK: - 下拉弹层
 
 /// 本机 CommandLineTools 工具链缺少 SwiftUI 宏插件（@State 不可用），
 /// 弹层等临时 UI 状态用 @StateObject 承载
@@ -335,7 +326,7 @@ private final class SettingsAnchorState: ObservableObject {
 }
 
 /// 列表内的悬停行；同样不能用 @State。
-/// 不设 private：保存清理排除表已拆到 `SaveCleanupExclusionView.swift`，同模块共用这一个
+/// 不设 private：设置页侧栏与 SettingsControls.swift 里的分段控件、侧栏项共用这一个
 final class SettingsIndexHoverState: ObservableObject {
     @Published var index: Int?
 }
@@ -427,7 +418,8 @@ private extension View {
     }
 }
 
-/// 与状态栏下拉共用 OptionPanel 的设置选择器；面板由宿主（`settingsPopupHost`）渲染
+/// 与状态栏下拉共用 OptionPanel 的设置选择器；面板由宿主（`settingsPopupHost`）渲染。
+/// 按钮改成 28 高、单层 0.5 描边、箭头用说明文字灰；弹层定位逻辑不变
 private struct SettingsPicker<Option: Hashable & Identifiable>: View {
     let title: String
     @Binding var selection: Option
@@ -436,39 +428,43 @@ private struct SettingsPicker<Option: Hashable & Identifiable>: View {
     let width: CGFloat
     @ObservedObject var popups: SettingsPopupState
     @StateObject private var anchor = SettingsAnchorState()
+    @StateObject private var hover = InterfaceHoverState()
 
     private var selectedIndex: Int? {
         options.firstIndex(of: selection)
     }
 
+    private var isOpen: Bool {
+        popups.request?.id == title
+    }
+
     var body: some View {
         Button(action: toggle) {
-            HStack(spacing: 8) {
+            HStack(spacing: 12) {
                 Text(label(selection))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(SettingsStyle.text)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(InterfaceStyle.accent)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(SettingsStyle.text2)
             }
             .padding(.horizontal, 10)
-            .frame(width: width, height: 28)
+            .frame(width: width, height: SettingsMetrics.controlHeight)
             .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(InterfaceStyle.raised)
+                RoundedRectangle(cornerRadius: SettingsMetrics.controlRadius, style: .continuous)
+                    .fill(hover.isHovered || isOpen ? SettingsStyle.controlHover : SettingsStyle.control)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(popups.request?.id == title
-                                  ? InterfaceStyle.accentBorder
-                                  : InterfaceStyle.borderStrong,
-                                  lineWidth: 1)
+                RoundedRectangle(cornerRadius: SettingsMetrics.controlRadius, style: .continuous)
+                    .strokeBorder(isOpen ? SettingsStyle.accent : SettingsStyle.controlLine,
+                                  lineWidth: isOpen ? 1 : 0.5)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hover.isHovered = $0 }
         .background(
             GeometryReader { proxy in
                 Color.clear
@@ -501,166 +497,15 @@ private struct SettingsPicker<Option: Hashable & Identifiable>: View {
     }
 }
 
-/// 多选项单选列表，替代系统 radioGroup，保持设置页与下拉列表一致。
-private struct SettingsRadioList<Option: Hashable & Identifiable>: View {
-    let options: [Option]
-    @Binding var selection: Option
-    let label: (Option) -> String
-    @StateObject private var hover = SettingsIndexHoverState()
+/// 单位文字：11pt 说明灰，与说明行同一节奏
+private struct SettingsUnitText: View {
+    let text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(options.indices, id: \.self) { index in
-                let option = options[index]
-                Button {
-                    selection = option
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: selection == option
-                              ? "circle.inset.filled"
-                              : "circle")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(selection == option
-                                             ? InterfaceStyle.accent
-                                             : InterfaceStyle.muted)
-                        Text(label(option))
-                            .font(.system(size: 12, weight: selection == option ? .medium : .regular))
-                            .foregroundStyle(.primary)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 9)
-                    .frame(minHeight: 28)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(selection == option
-                                  ? InterfaceStyle.accentSoft
-                                  : (hover.index == index ? InterfaceStyle.raised : Color.clear))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(selection == option
-                                          ? InterfaceStyle.accentBorder
-                                          : Color.clear,
-                                          lineWidth: 1)
-                    )
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hover.index = $0 ? index : nil }
-            }
-        }
-        .frame(maxWidth: 280, alignment: .leading)
-    }
-}
-
-/// 编码优先级列表：保留选择、悬停和标题计数，避免系统 List 的默认外观。
-private struct SettingsSelectionList<Option: Hashable & Identifiable>: View {
-    let options: [Option]
-    @Binding var selection: Option?
-    let title: String
-    let label: (Option) -> String
-    let width: CGFloat
-    let height: CGFloat
-    @StateObject private var hover = SettingsIndexHoverState()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 7) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(InterfaceStyle.accent)
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                Spacer(minLength: 0)
-                Text("\(options.count)")
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
-                    .foregroundStyle(InterfaceStyle.muted)
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
-
-            Rectangle()
-                .fill(InterfaceStyle.border)
-                .frame(height: 1)
-                .padding(.horizontal, 8)
-
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 2) {
-                    ForEach(options.indices, id: \.self) { index in
-                        let option = options[index]
-                        Button {
-                            selection = option
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: selection == option
-                                      ? "circle.inset.filled"
-                                      : "circle")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(selection == option
-                                                     ? InterfaceStyle.accent
-                                                     : InterfaceStyle.muted)
-                                Text(label(option))
-                                    .font(.system(size: 11, weight: selection == option ? .medium : .regular))
-                                    .foregroundStyle(selection == option ? .primary : InterfaceStyle.muted)
-                                Spacer(minLength: 0)
-                            }
-                            .frame(minHeight: 26)
-                            .padding(.horizontal, 9)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(selection == option
-                                          ? InterfaceStyle.accentSoft
-                                          : (hover.index == index ? InterfaceStyle.raised : Color.clear))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .strokeBorder(selection == option
-                                                  ? InterfaceStyle.accentBorder
-                                                  : Color.clear,
-                                                  lineWidth: 1)
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .onHover { hover.index = $0 ? index : nil }
-                    }
-                }
-                .padding(6)
-            }
-        }
-        .frame(width: width, height: height, alignment: .topLeading)
-        .background(FrostedSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous)))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
-        )
-    }
-}
-
-private enum SettingsMetrics {
-    /// 输入框统一高度：行高、窗口宽高、额外滚动与等宽字体显示框共用，
-    /// 新增输入框时一并取这里，避免各行高度再次走散
-    static let fieldHeight: CGFloat = 28
-    /// 定高输入框里 12pt 文字的基线位置（框顶到基线的距离）；
-    /// 只有图形没有文字的控件（步进器）也用它声明基线，行标题才能与框内文字对齐
-    static let fieldTextBaseline: CGFloat = 18
-}
-
-private extension View {
-    func settingsFieldFrame(width: CGFloat) -> some View {
-        self
-            .font(.system(size: 12))
-            .padding(.horizontal, 8)
-            .frame(width: width, height: SettingsMetrics.fieldHeight)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(InterfaceStyle.field)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
-            )
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(SettingsStyle.text2)
+            .fixedSize()
     }
 }
 
@@ -669,73 +514,74 @@ private extension View {
 private struct GeneralSettingsPane: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject var popups: SettingsPopupState
+    @StateObject private var sheet = SheetToggle()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsRow(L10n.t("界面语言：")) {
-                SettingsPicker(title: L10n.t("界面语言"),
-                               selection: $settings.interfaceLanguage,
-                               options: InterfaceLanguage.allCases,
-                               label: \.displayName,
-                               width: 180,
-                               popups: popups)
+        VStack(alignment: .leading, spacing: SettingsMetrics.groupSpacing) {
+            SettingsGroup(L10n.t("界面")) {
+                SettingsRow(L10n.t("界面语言"), showsDivider: false) {
+                    SettingsPicker(title: L10n.t("界面语言"),
+                                   selection: $settings.interfaceLanguage,
+                                   options: InterfaceLanguage.allCases,
+                                   label: \.displayName,
+                                   width: 180,
+                                   popups: popups)
+                }
             }
-            SettingsDivider()
-            SettingsRow(L10n.t("启动时：")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    LitePadToggle(title: L10n.t("重新打开最后关闭的窗口"),
+
+            SettingsGroup(L10n.t("启动")) {
+                SettingsSwitchRow(title: L10n.t("重新打开最后关闭的窗口"),
+                                  note: L10n.t("恢复上次的标签、选区与滚动位置。"),
+                                  showsDivider: false,
                                   isOn: $settings.restoreSessionOnLaunch)
-                    HStack(spacing: 8) {
-                        Text(L10n.t("当无项目可以打开时："))
-                            .foregroundStyle(.secondary)
+                // 没有可恢复的文稿时怎么启动，只在恢复会话开启时出现（设计稿 data-reveal）
+                if settings.restoreSessionOnLaunch {
+                    SettingsRow(L10n.t("没有可恢复的文稿时")) {
                         SettingsPicker(title: L10n.t("启动动作"),
                                        selection: $settings.launchAction,
                                        options: LaunchAction.allCases,
                                        label: \.displayName,
                                        width: 180,
                                        popups: popups)
-                        .disabled(!settings.restoreSessionOnLaunch)
                     }
-                    .padding(.leading, 18)
-                    .opacity(settings.restoreSessionOnLaunch ? 1 : 0.5)
                 }
             }
-            SettingsDivider()
-            SettingsRow(L10n.t("文稿保存：")) {
-                VStack(alignment: .leading, spacing: 4) {
-                    LitePadToggle(title: L10n.t("开启自动保存"), isOn: $settings.autosaveEnabled)
-                    Text(L10n.t("编辑已保存的文件时自动写盘；未标题的文稿仍需手动保存。"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    LitePadToggle(title: L10n.t("保存时删除行尾空白"),
+
+            SettingsGroup(L10n.t("保存"),
+                          footnote: L10n.t("两项清理只在显式保存（含关闭标签与退出时的确认保存）前执行；自动保存不改动正文。")) {
+                SettingsSwitchRow(title: L10n.t("自动保存"),
+                                  note: L10n.t("编辑已保存的文件时自动写盘；未标题文稿仍需手动保存。"),
+                                  showsDivider: false,
+                                  isOn: $settings.autosaveEnabled)
+                SettingsSwitchRow(title: L10n.t("保存时删除行尾空白"),
+                                  note: L10n.t("只去空格与制表符；会破坏 Markdown 行尾双空格与补丁文件空行。"),
                                   isOn: $settings.trimTrailingWhitespaceOnSave)
-                    LitePadToggle(title: L10n.t("保存时补齐末尾换行"),
+                SettingsSwitchRow(title: L10n.t("保存时补齐末尾换行"),
+                                  note: L10n.t("在末尾补一个换行；补丁类文件以此为语义。"),
                                   isOn: $settings.ensureFinalNewlineOnSave)
-                    Text(L10n.t("两项只在显式保存（含关闭标签与退出时的确认保存）前执行，自动保存不改动正文。"
-                         + L10n.t("删除行尾空白只去掉空格与制表符（不换行空格、全角空格等不动），")
-                         + L10n.t("与编辑菜单里的「删除行尾空白」同一口径。")
-                         + L10n.t("两项都不是保义操作：删除行尾空白会破坏 Markdown 的行尾双空格（硬换行）与补丁文件的空行，")
-                         + L10n.t("补齐末尾换行会改写补丁文件这类以末尾换行为语义的格式；")
-                         + L10n.t("没有内置语法的扩展名（如 Markdown 的 .md）按「纯文本」归类，")
-                         + L10n.t("需要保留时在下方按语法排除。")))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: 340, alignment: .leading)
-                    // 排除口径只在这两项有任一项开启时才有意义
-                    if settings.saveCleanupEnabled {
-                        SaveCleanupExclusionList()
+                SettingsRow(L10n.t("例外语法")) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
+                        Text(L10n.format("%d 种", settings.saveCleanupExcludedLanguageIDs.count))
+                            .font(.system(size: 11))
+                            .foregroundStyle(SettingsStyle.text2)
+                        SettingsButton(title: L10n.t("编辑…")) { sheet.isPresented = true }
                     }
                 }
+                .opacity(settings.saveCleanupEnabled ? 1 : 0.42)
+                .disabled(!settings.saveCleanupEnabled)
             }
-            SettingsDivider()
-            SettingsRow(L10n.t("当文稿被其他应用更改时：")) {
-                SettingsRadioList(options: ExternalChangeAction.allCases,
-                                  selection: $settings.externalChangeAction,
-                                  label: \.displayName)
+
+            SettingsGroup(L10n.t("外部更改")) {
+                SettingsRow(L10n.t("文稿被其他应用更改时"), showsDivider: false) {
+                    SettingsRadioList(options: ExternalChangeAction.allCases,
+                                      selection: $settings.externalChangeAction,
+                                      label: \.displayName)
+                }
             }
         }
-        .padding(.vertical, 2)
+        .sheet(isPresented: $sheet.isPresented) {
+            SaveCleanupExclusionSheet(onClose: { sheet.isPresented = false })
+        }
     }
 }
 
@@ -745,70 +591,80 @@ private struct GeneralSettingsPane: View {
 
 private struct AppearanceSettingsPane: View {
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject var popups: SettingsPopupState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsRow(L10n.t("等宽字体：")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Text("\(settings.editorFontDisplayName)  \(Int(settings.editorFontSize))")
-                            .font(.system(size: 12))
+        VStack(alignment: .leading, spacing: SettingsMetrics.groupSpacing) {
+            SettingsGroup(L10n.t("字体")) {
+                SettingsRow(L10n.t("等宽字体"), showsDivider: false) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
+                        Text(settings.editorFontDisplayName)
+                            .font(.system(size: 13))
+                            .foregroundStyle(SettingsStyle.text)
                             .lineLimit(1)
-                            .frame(maxWidth: 180)
-                            .padding(.horizontal, 10)
-                            // 与「行高」等输入框同高；长字体名只截断，不再把这一行撑高
-                            .frame(height: SettingsMetrics.fieldHeight)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(InterfaceStyle.field)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .strokeBorder(InterfaceStyle.borderStrong)
-                            )
-                        FontSizeStepper()
-                        Button(L10n.t("选择…")) { chooseFont() }
-                            .buttonStyle(PanelActionButtonStyle(tone: .neutral,
-                                                                minHeight: SettingsMetrics.fieldHeight))
+                            .truncationMode(.middle)
+                            .frame(maxWidth: 180, alignment: .trailing)
+                        SettingsButton(title: L10n.t("选择…")) { chooseFont() }
                     }
-                    LitePadToggle(title: L10n.t("连字"), isOn: $settings.ligaturesEnabled)
+                }
+                SettingsRow(L10n.t("字号")) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
+                        Text("\(Int(settings.editorFontSize))")
+                            .font(.system(size: 13).monospacedDigit())
+                            .foregroundStyle(SettingsStyle.text)
+                            .frame(minWidth: 20, alignment: .trailing)
+                        SettingsStepper(onIncrement: { settings.stepEditorFontSize(by: 1) },
+                                        onDecrement: { settings.stepEditorFontSize(by: -1) })
+                        SettingsUnitText(text: L10n.t("点"))
+                    }
+                }
+                SettingsSwitchRow(title: L10n.t("连字"),
+                                  note: L10n.t("为 Fira Code 这类字体启用 → ≠ ≥ 的连字替换。"),
+                                  isOn: $settings.ligaturesEnabled)
+                SettingsRow(L10n.t("行高")) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
+                        TextField("", value: $settings.lineHeightMultiple,
+                                  format: .number.precision(.fractionLength(0...2)))
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.trailing)
+                            .settingsFieldLook(width: 64)
+                        SettingsStepper(onIncrement: { bumpLineHeight(0.1) },
+                                        onDecrement: { bumpLineHeight(-0.1) })
+                        SettingsUnitText(text: L10n.t("倍"))
+                    }
                 }
             }
-            SettingsRow(L10n.t("行高：")) {
-                HStack(spacing: 6) {
-                    TextField("", value: $settings.lineHeightMultiple,
-                              format: .number.precision(.fractionLength(0...2)))
-                        .textFieldStyle(.plain)
-                        .settingsFieldFrame(width: 64)
-                        .multilineTextAlignment(.trailing)
-                    SettingsStepper(onIncrement: { bumpLineHeight(0.1) },
-                                    onDecrement: { bumpLineHeight(-0.1) })
-                    Text(L10n.t("倍"))
+
+            SettingsGroup(L10n.t("主题")) {
+                SettingsRow(L10n.t("外观"), showsDivider: false) {
+                    AppearanceTiles(selection: $settings.appearanceMode)
                 }
-            }
-            SettingsRow(L10n.t("外观：")) {
-                RadioRow(options: AppearanceMode.allCases, selection: $settings.appearanceMode,
-                         label: \.displayName)
-            }
-            SettingsRow(L10n.t("语法主题：")) {
-                RadioRow(options: SyntaxTheme.allCases, selection: $settings.syntaxTheme,
-                         label: \.displayName)
-            }
-            SettingsRow(L10n.t("顶栏与状态栏：")) {
-                RadioRow(options: StatusBarBackgroundStyle.allCases, selection: $settings.statusBarStyle,
-                         label: \.displayName)
-            }
-            SettingsRow(L10n.t("编辑器透明度：")) {
-                HStack(spacing: 8) {
-                    Slider(value: $settings.editorOpacity, in: 10...100, step: 5)
-                        .frame(width: 240)
-                    Text("\(Int(settings.editorOpacity))%")
-                        .monospacedDigit()
-                        .frame(width: 44, alignment: .trailing)
+                SettingsRow(L10n.t("语法主题"), note: L10n.t("只作用于代码与标记的高亮配色。")) {
+                    SettingsPicker(title: L10n.t("语法主题"),
+                                   selection: $settings.syntaxTheme,
+                                   options: SyntaxTheme.allCases,
+                                   label: \.displayName,
+                                   width: 150,
+                                   popups: popups)
+                }
+                SettingsRow(L10n.t("顶栏与状态栏")) {
+                    SettingsSegmented(options: StatusBarBackgroundStyle.allCases,
+                                      selection: $settings.statusBarStyle,
+                                      label: \.displayName)
+                }
+                SettingsRow(L10n.t("编辑器透明度"), note: L10n.t("100% 时编辑区完全不透明。")) {
+                    HStack(spacing: 10) {
+                        Slider(value: $settings.editorOpacity, in: 10...100, step: 5)
+                            .tint(SettingsStyle.accent)
+                            .frame(width: 170)
+                        Text("\(Int(settings.editorOpacity))%")
+                            .font(.system(size: 12).monospacedDigit())
+                            .foregroundStyle(SettingsStyle.text2)
+                            .frame(width: 38, alignment: .trailing)
+                    }
                 }
             }
         }
-        .padding(.vertical, 2)
     }
 
     private func bumpLineHeight(_ delta: Double) {
@@ -833,188 +689,137 @@ private final class FontPanelTarget: NSObject {
     }
 }
 
-/// 字号微调按钮（上下箭头）：与「行高」等输入框同高，取 SettingsStepper 的默认尺寸。
-/// 步进与可调区间的收敛在设置对象里统一做，与「显示」菜单的缩放快捷键同一份口径
-private struct FontSizeStepper: View {
-    @ObservedObject private var settings = AppSettings.shared
-
-    var body: some View {
-        SettingsStepper(onIncrement: { settings.stepEditorFontSize(by: 1) },
-                        onDecrement: { settings.stepEditorFontSize(by: -1) })
-    }
-}
-
-private struct SettingsStepper: View {
-    var width: CGFloat = 22
-    var height: CGFloat = 28
-    let onIncrement: () -> Void
-    let onDecrement: () -> Void
-
-    var body: some View {
-        VStack(spacing: 1) {
-            stepperButton("chevron.up", action: onIncrement)
-            stepperButton("chevron.down", action: onDecrement)
-        }
-        .frame(width: width, height: height)
-        // 两个按钮都只有图标没有文字，SwiftUI 合成出的基线偏高，会把同一行左侧的标题
-        // 拉到输入框上沿；这里按输入框内文字的基线声明，标题才与框内文字齐平
-        .alignmentGuide(.firstTextBaseline) { _ in SettingsMetrics.fieldTextBaseline }
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(InterfaceStyle.raised)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(InterfaceStyle.borderStrong, lineWidth: 1)
-        )
-    }
-
-    private func stepperButton(_ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 8, weight: .semibold))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - 窗口
+// MARK: - 编辑器
 
 private struct WindowSettingsPane: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsRow(L10n.t("窗口大小：")) {
-                HStack(alignment: .top, spacing: 10) {
-                    sizeField(L10n.t("自动"), binding: widthBinding, caption: L10n.t("宽度"))
-                    Text(L10n.t("像素")).font(.caption).foregroundStyle(.secondary).padding(.top, 5)
-                    sizeField(L10n.t("自动"), binding: heightBinding, caption: L10n.t("高度"))
+        VStack(alignment: .leading, spacing: SettingsMetrics.groupSpacing) {
+            SettingsGroup(L10n.t("窗口")) {
+                SettingsRow(L10n.t("窗口大小"), showsDivider: false) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
+                        TextField(L10n.t("自动"), text: widthBinding)
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.trailing)
+                            .settingsFieldLook(width: 72)
+                        SettingsUnitText(text: "×")
+                        TextField(L10n.t("自动"), text: heightBinding)
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.trailing)
+                            .settingsFieldLook(width: 72)
+                        SettingsUnitText(text: L10n.t("像素"))
+                    }
                 }
             }
-            SettingsDivider()
-            SettingsRow(L10n.t("显示：")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    LitePadToggle(title: L10n.t("行号"), isOn: $settings.showLineNumbers)
-                    VStack(alignment: .leading, spacing: 4) {
-                        LitePadToggle(title: L10n.t("不可见元素"), isOn: $settings.showInvisibles)
-                        if settings.showInvisibles {
-                            HStack(spacing: 14) {
-                                LitePadToggle(title: L10n.t("行尾"), isOn: $settings.invisibles.lineEndings)
-                                LitePadToggle(title: L10n.t("制表符"), isOn: $settings.invisibles.tabs)
-                                LitePadToggle(title: L10n.t("空格"), isOn: $settings.invisibles.spaces)
-                            }
-                            .padding(.leading, 18)
-                            HStack(spacing: 14) {
-                                LitePadToggle(title: L10n.t("其他空白字符"),
-                                              isOn: $settings.invisibles.otherWhitespace)
-                                LitePadToggle(title: L10n.t("其他控制字符"),
-                                              isOn: $settings.invisibles.otherControl)
-                            }
-                            .padding(.leading, 18)
+
+            SettingsGroup(L10n.t("显示")) {
+                SettingsSwitchRow(title: L10n.t("行号"),
+                                  showsDivider: false,
+                                  isOn: $settings.showLineNumbers)
+                SettingsSwitchRow(title: L10n.t("不可见元素"),
+                                  note: L10n.t("显示空白与换行等不可见字符。"),
+                                  isOn: $settings.showInvisibles)
+                if settings.showInvisibles {
+                    SettingsBlockRow(showsDivider: false, isSubrow: true) {
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10, alignment: .leading),
+                                            GridItem(.flexible(), spacing: 10, alignment: .leading),
+                                            GridItem(.flexible(), alignment: .leading)],
+                                  alignment: .leading,
+                                  spacing: 6) {
+                            SettingsCheckbox(title: L10n.t("行尾"), isOn: $settings.invisibles.lineEndings)
+                            SettingsCheckbox(title: L10n.t("制表符"), isOn: $settings.invisibles.tabs)
+                            SettingsCheckbox(title: L10n.t("空格"), isOn: $settings.invisibles.spaces)
+                            SettingsCheckbox(title: L10n.t("其他空白字符"),
+                                             isOn: $settings.invisibles.otherWhitespace)
+                            SettingsCheckbox(title: L10n.t("其他控制字符"),
+                                             isOn: $settings.invisibles.otherControl)
                         }
                     }
-                    LitePadToggle(title: L10n.t("缩进指示"), isOn: $settings.showIndentGuides)
-                    HStack(spacing: 6) {
-                        LitePadToggle(title: L10n.t("列位置页面指示："),
-                                      isOn: $settings.pageGuideEnabled)
+                }
+                SettingsSwitchRow(title: L10n.t("缩进指示"),
+                                  isOn: $settings.showIndentGuides)
+                SettingsSwitchRow(title: L10n.t("列位置页面指示"),
+                                  isOn: $settings.pageGuideEnabled)
+                SettingsRow(L10n.t("页面宽度"), isSubrow: true) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
                         TextField("", value: $settings.pageGuideColumn, format: .number)
                             .textFieldStyle(.plain)
-                            .settingsFieldFrame(width: 60)
                             .multilineTextAlignment(.trailing)
-                            .disabled(!settings.pageGuideEnabled)
+                            .settingsFieldLook(width: 64)
+                        SettingsUnitText(text: L10n.t("列"))
                     }
-                    .padding(.leading, 18)
                 }
+                .opacity(settings.pageGuideEnabled ? 1 : 0.42)
+                .disabled(!settings.pageGuideEnabled)
+                SettingsSwitchRow(title: L10n.t("当前行高亮"),
+                                  note: L10n.t("用背景色标出光标所在行。"),
+                                  isOn: $settings.highlightCurrentLine)
             }
-            SettingsRow(L10n.t("当前行：")) {
-                LitePadToggle(title: L10n.t("改变背景颜色"), isOn: $settings.highlightCurrentLine)
-            }
-            SettingsDivider()
-            SettingsRow(L10n.t("缩进：")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    LitePadToggle(title: L10n.t("Tab 键插入空格"), isOn: $settings.insertSpacesForTab)
-                    HStack(spacing: 6) {
-                        Text(L10n.t("缩进宽度："))
+
+            SettingsGroup(L10n.t("缩进与换行")) {
+                SettingsSwitchRow(title: L10n.t("Tab 键插入空格"),
+                                  note: L10n.t("关闭时插入一个制表符，宽度按缩进宽度换算。"),
+                                  showsDivider: false,
+                                  isOn: $settings.insertSpacesForTab)
+                SettingsRow(L10n.t("缩进宽度")) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
                         TextField("", value: $settings.indentWidth, format: .number)
                             .textFieldStyle(.plain)
-                            .settingsFieldFrame(width: 52)
                             .multilineTextAlignment(.trailing)
+                            .settingsFieldLook(width: 56)
                         SettingsStepper(onIncrement: { settings.stepIndentWidth(by: 1) },
                                         onDecrement: { settings.stepIndentWidth(by: -1) })
-                        Text(L10n.t("个字符")).font(.caption).foregroundStyle(.secondary)
+                        SettingsUnitText(text: L10n.t("个字符"))
                     }
-                    .padding(.leading, 18)
                 }
-            }
-            SettingsDivider()
-            SettingsRow(L10n.t("换行：")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    LitePadToggle(title: L10n.t("换行以适合编辑器宽度"), isOn: $settings.wrapLines)
-                    HStack(spacing: 6) {
-                        LitePadToggle(title: L10n.t("自动换行缩进字符数："),
-                                      isOn: $settings.wrapIndentEnabled)
-                            .disabled(!settings.wrapLines)
-                        TextField("", value: $settings.wrapIndentChars, format: .number)
+                SettingsSwitchRow(title: L10n.t("换行以适合编辑器宽度"),
+                                  isOn: $settings.wrapLines)
+                // 自动换行缩进只在「换行以适合编辑器宽度」开启时出现（设计稿 data-reveal）
+                if settings.wrapLines {
+                    SettingsRow(L10n.t("自动换行缩进"), isSubrow: true) {
+                        HStack(spacing: SettingsMetrics.controlSpacing) {
+                            // 「自动换行缩进」的开关：设计稿未列这一项，但设置本身存在，
+                            // 与数字同排，整行不承担点击
+                            SettingsWrapIndentSwitch(isOn: $settings.wrapIndentEnabled)
+                            TextField("", value: $settings.wrapIndentChars, format: .number)
+                                .textFieldStyle(.plain)
+                                .multilineTextAlignment(.trailing)
+                                .settingsFieldLook(width: 56)
+                                .disabled(!settings.wrapIndentEnabled)
+                                .opacity(settings.wrapIndentEnabled ? 1 : 0.42)
+                            SettingsStepper(onIncrement: { bumpWrapIndent(1) },
+                                            onDecrement: { bumpWrapIndent(-1) })
+                                .opacity(settings.wrapIndentEnabled ? 1 : 0.42)
+                                .disabled(!settings.wrapIndentEnabled)
+                            SettingsUnitText(text: L10n.t("个空格"))
+                        }
+                    }
+                }
+                SettingsRow(L10n.t("书写方向")) {
+                    SettingsSegmented(options: WritingDirectionOption.allCases,
+                                      selection: $settings.writingDirection,
+                                      label: \.displayName)
+                }
+                SettingsRow(L10n.t("额外滚动"), note: L10n.t("在正文末尾保留一段可滚动空白。")) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
+                        TextField("", value: $settings.extraScrollPercent,
+                                  format: .number.precision(.fractionLength(0)))
                             .textFieldStyle(.plain)
-                            .settingsFieldFrame(width: 52)
                             .multilineTextAlignment(.trailing)
-                            .disabled(!settings.wrapLines || !settings.wrapIndentEnabled)
-                        Text(L10n.t("个空格")).font(.caption).foregroundStyle(.secondary)
+                            .settingsFieldLook(width: 64)
+                        SettingsStepper(onIncrement: { bumpExtraScroll(5) },
+                                        onDecrement: { bumpExtraScroll(-5) })
+                        SettingsUnitText(text: "%")
                     }
-                    .padding(.leading, 18)
                 }
             }
-            SettingsRow(L10n.t("书写方向：")) {
-                RadioRow(options: WritingDirectionOption.allCases, selection: $settings.writingDirection,
-                         label: \.displayName)
-            }
-            SettingsRow(L10n.t("额外滚动：")) {
-                HStack(spacing: 6) {
-                    TextField("", value: $settings.extraScrollPercent,
-                              format: .number.precision(.fractionLength(0)))
-                        .textFieldStyle(.plain)
-                        .settingsFieldFrame(width: 70)
-                        .multilineTextAlignment(.trailing)
-                    SettingsStepper(onIncrement: { bumpExtraScroll(5) },
-                                    onDecrement: { bumpExtraScroll(-5) })
-                    Text("%").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            SettingsDivider()
-            SettingsRow(L10n.t("状态栏显示：")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 16) {
-                        LitePadToggle(title: L10n.t("行数"), isOn: $settings.statusBarLineCount)
-                        LitePadToggle(title: L10n.t("位置"), isOn: $settings.statusBarCaretOffset)
-                    }
-                    HStack(spacing: 16) {
-                        LitePadToggle(title: L10n.t("字符数"), isOn: $settings.statusBarCharCount)
-                        LitePadToggle(title: L10n.t("当前行"), isOn: $settings.statusBarCaretLine)
-                    }
-                    HStack(spacing: 16) {
-                        LitePadToggle(title: L10n.t("字数"), isOn: $settings.statusBarWordCount)
-                        LitePadToggle(title: L10n.t("当前列"), isOn: $settings.statusBarCaretColumn)
-                    }
-                    .frame(maxWidth: 220, alignment: .leading)
-                    LitePadToggle(title: L10n.t("选区"), isOn: $settings.statusBarSelectionCount)
-                }
-            }
-        }
-        .padding(.vertical, 2)
-    }
 
-    private func sizeField(_ placeholder: String, binding: Binding<String>, caption: String) -> some View {
-        VStack(spacing: 2) {
-            TextField(placeholder, text: binding)
-                .textFieldStyle(.plain)
-                .settingsFieldFrame(width: 80)
-                .multilineTextAlignment(.center)
-            Text(caption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            SettingsGroup(L10n.t("状态栏")) {
+                SettingsBlockRow(showsDivider: false) {
+                    SettingsStatusBarGrid()
+                }
+            }
         }
     }
 
@@ -1041,6 +846,67 @@ private struct WindowSettingsPane: View {
     private func bumpExtraScroll(_ delta: Double) {
         settings.extraScrollPercent = min(100, max(0, settings.extraScrollPercent + delta))
     }
+
+    private func bumpWrapIndent(_ delta: Int) {
+        settings.wrapIndentChars = min(16, max(0, settings.wrapIndentChars + delta))
+    }
+}
+
+/// 子行里的开关：只占一个开关的宽度，点击只切它自己（外层行不承担点击）
+private struct SettingsWrapIndentSwitch: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(Motion.control) { isOn.toggle() }
+        } label: {
+            SettingsSwitchKnob(isOn: isOn)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L10n.t("自动换行缩进"))
+        .accessibilityValue(isOn ? L10n.t("已开启") : L10n.t("已关闭"))
+    }
+}
+
+/// 状态栏七项显示开关：两列网格，每个格子整行可点
+private struct SettingsStatusBarGrid: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 22), GridItem(.flexible())],
+                  alignment: .leading,
+                  spacing: 0) {
+            cell(L10n.t("行数"), $settings.statusBarLineCount)
+            cell(L10n.t("字符数"), $settings.statusBarCharCount)
+            cell(L10n.t("字数"), $settings.statusBarWordCount)
+            cell(L10n.t("选区"), $settings.statusBarSelectionCount)
+            cell(L10n.t("位置"), $settings.statusBarCaretOffset)
+            cell(L10n.t("当前行"), $settings.statusBarCaretLine)
+            cell(L10n.t("当前列"), $settings.statusBarCaretColumn)
+            Color.clear.frame(height: 30)
+        }
+    }
+
+    private func cell(_ title: String, _ isOn: Binding<Bool>) -> some View {
+        Button {
+            withAnimation(Motion.control) { isOn.wrappedValue.toggle() }
+        } label: {
+            HStack(spacing: 12) {
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundStyle(SettingsStyle.text)
+                Spacer(minLength: 0)
+                SettingsSwitchKnob(isOn: isOn.wrappedValue)
+            }
+            .frame(height: 30)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(isOn.wrappedValue ? L10n.t("已开启") : L10n.t("已关闭"))
+        .accessibilityAddTraits(isOn.wrappedValue ? [.isButton, .isSelected] : .isButton)
+    }
 }
 
 // MARK: - 格式
@@ -1052,49 +918,63 @@ private struct FormatSettingsPane: View {
     @StateObject private var sheet = SheetToggle()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsRow(L10n.t("默认行尾：")) {
-                SettingsPicker(title: L10n.t("默认行尾"),
-                               selection: $settings.defaultLineEnding,
-                               options: LineEnding.allCases,
-                               label: lineEndingName,
-                               width: 240,
-                               popups: popups)
-            }
-            SettingsDivider()
-            SettingsRow(L10n.t("默认文本编码：")) {
-                SettingsPicker(title: L10n.t("默认文本编码"),
-                               selection: $settings.defaultEncoding,
-                               options: TextEncoding.allCases,
-                               label: \.displayName,
-                               width: 260,
-                               popups: popups)
-            }
-            SettingsRow(L10n.t("编码优先级：")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Button(L10n.t("编辑列表…")) { sheet.isPresented = true }
-                        .buttonStyle(PanelActionButtonStyle(tone: .neutral))
-                    LitePadToggle(title: L10n.t("参考文稿中的编码声明"),
-                                  isOn: $settings.respectCharsetDeclaration)
+        VStack(alignment: .leading, spacing: SettingsMetrics.groupSpacing) {
+            SettingsGroup(L10n.t("新建文稿")) {
+                SettingsRow(L10n.t("默认行尾"), showsDivider: false) {
+                    SettingsPicker(title: L10n.t("默认行尾"),
+                                   selection: $settings.defaultLineEnding,
+                                   options: LineEnding.allCases,
+                                   label: lineEndingName,
+                                   width: 190,
+                                   popups: popups)
+                }
+                SettingsRow(L10n.t("默认文本编码")) {
+                    SettingsPicker(title: L10n.t("默认文本编码"),
+                                   selection: $settings.defaultEncoding,
+                                   options: TextEncoding.allCases,
+                                   label: \.displayName,
+                                   width: 200,
+                                   popups: popups)
+                }
+                SettingsRow(L10n.t("默认语法")) {
+                    SettingsPicker(title: L10n.t("默认语法"),
+                                   selection: Binding<LanguageDefinition>(
+                                       get: { settings.defaultLanguage },
+                                       set: { settings.setDefaultLanguage($0) }
+                                   ),
+                                   options: LanguageDefinition.all,
+                                   label: \.displayName,
+                                   width: 190,
+                                   popups: popups)
                 }
             }
-            SettingsDivider()
-            SettingsRow(L10n.t("默认语法：")) {
-                SettingsPicker(title: L10n.t("默认语法"),
-                               selection: Binding<LanguageDefinition>(
-                                   get: { settings.defaultLanguage },
-                                   set: { settings.setDefaultLanguage($0) }
-                               ),
-                               options: LanguageDefinition.all,
-                               label: \.displayName,
-                               width: 260,
-                               popups: popups)
+
+            SettingsGroup(L10n.t("编码探测")) {
+                SettingsRow(L10n.t("编码优先级"),
+                            note: L10n.t("无 BOM 的文件按顺序尝试解码。"),
+                            showsDivider: false) {
+                    HStack(spacing: SettingsMetrics.controlSpacing) {
+                        Text(encodingSummary)
+                            .font(.system(size: 11).monospacedDigit())
+                            .foregroundStyle(SettingsStyle.text2)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: 160, alignment: .trailing)
+                        SettingsButton(title: L10n.t("编辑列表…")) { sheet.isPresented = true }
+                    }
+                }
+                SettingsSwitchRow(title: L10n.t("参考文稿中的编码声明"),
+                                  note: L10n.t("读取 HTML、XML 里的 charset 声明来决定解码。"),
+                                  isOn: $settings.respectCharsetDeclaration)
             }
         }
-        .padding(.vertical, 2)
         .sheet(isPresented: $sheet.isPresented) {
             EncodingPrioritySheet(onClose: { sheet.isPresented = false })
         }
+    }
+
+    private var encodingSummary: String {
+        settings.encodingPriority.map(\.displayName).joined(separator: " › ")
     }
 
     private func lineEndingName(_ ending: LineEnding) -> String {
@@ -1129,47 +1009,48 @@ private struct EncodingPrioritySheet: View {
     ]
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(L10n.t("无 BOM 的文件按以下顺序依次尝试解码，顺序即优先级。"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 11))
+                .foregroundStyle(SettingsStyle.text2)
+                .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 16) {
-                SettingsSelectionList(options: settings.encodingPriority,
-                                      selection: $state.selection,
-                                      title: L10n.t("编码优先级"),
-                                      label: \.displayName,
-                                      width: 300,
-                                      height: 190)
+                EncodingPriorityList(options: settings.encodingPriority,
+                                     selection: $state.selection,
+                                     title: L10n.t("编码优先级"),
+                                     label: \.displayName,
+                                     width: 300,
+                                     height: 190)
                 VStack(spacing: 8) {
-                    listButton(L10n.t("上移"), "chevron.up") { move(-1) }
-                    listButton(L10n.t("下移"), "chevron.down") { move(1) }
-                    listButton(L10n.t("移除"), "minus") { remove() }
+                    SettingsButton(title: L10n.t("上移")) { move(-1) }
+                    SettingsButton(title: L10n.t("下移")) { move(1) }
+                    SettingsButton(title: L10n.t("移除")) { remove() }
                 }
                 .padding(.top, 4)
             }
-            HStack {
+            HStack(spacing: SettingsMetrics.controlSpacing) {
                 SettingsPicker(title: L10n.t("添加编码"),
                                selection: addBinding,
                                options: remainingCandidates,
                                label: \.displayName,
-                               width: 320,
+                               width: 280,
                                popups: popups)
-                Button(L10n.t("添加")) {
+                    // 候选加完时按钮置灰，选择器也要一起禁用：否则还能展开一个只有表头的空面板
+                    .disabled(remainingCandidates.isEmpty)
+                SettingsButton(title: L10n.t("添加")) {
                     settings.updateEncodingPriority(settings.encodingPriority + [addBinding.wrappedValue])
                 }
-                .buttonStyle(PanelActionButtonStyle(tone: .accent))
                 .disabled(remainingCandidates.isEmpty)
+                Spacer(minLength: 0)
             }
-            Divider()
             HStack {
                 Spacer()
-                Button(L10n.t("完成")) { onClose() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(PanelActionButtonStyle(tone: .accent))
+                SettingsAccentButton(title: L10n.t("完成"), isDefault: true) { onClose() }
             }
         }
         .padding(20)
         .frame(width: 460)
+        .background(SettingsStyle.window)
         // 表底这一行离窗口下缘太近，弹层放不下就向上开（见 SettingsPopupLayer）
         .settingsPopupHost(popups)
     }
@@ -1184,16 +1065,6 @@ private struct EncodingPrioritySheet: View {
             get: { remainingCandidates.contains(state.toAdd) ? state.toAdd : (remainingCandidates.first ?? .utf8) },
             set: { state.toAdd = $0 }
         )
-    }
-
-    private func listButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
-        Button {
-            action()
-        } label: {
-            Label(title, systemImage: symbol)
-                .frame(width: 76)
-        }
-        .buttonStyle(PanelActionButtonStyle(tone: .neutral))
     }
 
     private func move(_ delta: Int) {
@@ -1213,81 +1084,72 @@ private struct EncodingPrioritySheet: View {
     }
 }
 
-// MARK: - 共用行组件
-
-/// 设置行：右对齐标签 + 内容
-private struct SettingsRow<Content: View>: View {
-    let label: String
-    @ViewBuilder let content: () -> Content
-
-    init(_ label: String, @ViewBuilder content: @escaping () -> Content) {
-        self.label = label
-        self.content = content
-    }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(label)
-                .frame(width: 128, alignment: .trailing)
-                .multilineTextAlignment(.trailing)
-            content()
-            Spacer(minLength: 0)
-        }
-        .font(.system(size: 13))
-    }
-}
-
-private struct SettingsDivider: View {
-    var body: some View {
-        Divider()
-            .padding(.vertical, 4)
-    }
-}
-
-/// 水平排列的单选组（系统 radioGroup 样式只支持纵向，这里自绘圆点）
-private struct RadioRow<Option: Hashable & Identifiable>: View {
+/// 编码优先级列表：保留选择、悬停和标题计数，外观走设置页的分组卡片口径
+private struct EncodingPriorityList<Option: Hashable>: View {
     let options: [Option]
-    @Binding var selection: Option
+    @Binding var selection: Option?
+    let title: String
     let label: (Option) -> String
+    let width: CGFloat
+    let height: CGFloat
     @StateObject private var hover = SettingsIndexHoverState()
 
     var body: some View {
-        HStack(spacing: 16) {
-            ForEach(options.indices, id: \.self) { index in
-                let option = options[index]
-                Button {
-                    selection = option
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: selection == option ? "circle.inset.filled" : "circle")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(selection == option
-                                             ? InterfaceStyle.accent
-                                             : InterfaceStyle.muted)
-                        Text(label(option))
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(SettingsStyle.text)
+                Spacer(minLength: 0)
+                Text("\(options.count)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(SettingsStyle.text2)
+            }
+            .padding(.horizontal, SettingsMetrics.rowPaddingH)
+            .padding(.vertical, 10)
+
+            Rectangle()
+                .fill(SettingsStyle.separator)
+                .frame(height: 0.5)
+                .padding(.leading, SettingsMetrics.rowPaddingH)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(options.indices, id: \.self) { index in
+                        let option = options[index]
+                        Button {
+                            selection = option
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text(label(option))
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(SettingsStyle.text)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, SettingsMetrics.rowPaddingH)
+                            .frame(height: 30)
+                            .background(selection == option
+                                        ? SettingsStyle.selectionStrong
+                                        : (hover.index == index ? SettingsStyle.selection : Color.clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { hover.index = $0 ? index : nil }
+                        .accessibilityLabel(label(option))
+                        .accessibilityAddTraits(selection == option ? [.isButton, .isSelected] : .isButton)
                     }
-                    .font(.system(size: 12, weight: selection == option ? .medium : .regular))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(selection == option
-                                  ? InterfaceStyle.accentSoft
-                                  : (hover.index == index ? InterfaceStyle.raised : Color.clear))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(selection == option
-                                          ? InterfaceStyle.accentBorder
-                                          : Color.clear,
-                                          lineWidth: 1)
-                    )
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .onHover { hover.index = $0 ? index : nil }
             }
         }
+        .frame(width: width, height: height, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius, style: .continuous)
+                .fill(SettingsStyle.card)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: SettingsMetrics.cardRadius, style: .continuous)
+                .strokeBorder(SettingsStyle.cardLine, lineWidth: 0.5)
+        )
     }
 }
